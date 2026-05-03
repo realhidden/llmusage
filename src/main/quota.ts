@@ -10,6 +10,7 @@ export type QuotaWindow = {
 
 export type Quota = {
   fetchedAt: string;
+  subscription: string | null;   // "pro" | "max" | etc, from keychain
   fiveHour: QuotaWindow | null;
   sevenDay: QuotaWindow | null;
   sevenDayOpus: QuotaWindow | null;
@@ -29,7 +30,12 @@ const TTL_MS = 60_000;
 let cache: { at: number; value: Quota | null } | null = null;
 let inflight: Promise<Quota | null> | null = null;
 
-async function readKeychainToken(): Promise<string | null> {
+type Credentials = {
+  accessToken: string;
+  subscriptionType: string | null;
+};
+
+async function readKeychain(): Promise<Credentials | null> {
   if (process.platform !== 'darwin') return null;
   try {
     const { stdout } = await execFileP('security', [
@@ -40,8 +46,15 @@ async function readKeychainToken(): Promise<string | null> {
     ]);
     const trimmed = stdout.trim();
     if (!trimmed) return null;
-    const parsed = JSON.parse(trimmed) as { claudeAiOauth?: { accessToken?: string } };
-    return parsed.claudeAiOauth?.accessToken ?? null;
+    const parsed = JSON.parse(trimmed) as {
+      claudeAiOauth?: { accessToken?: string; subscriptionType?: string };
+    };
+    const accessToken = parsed.claudeAiOauth?.accessToken;
+    if (!accessToken) return null;
+    return {
+      accessToken,
+      subscriptionType: parsed.claudeAiOauth?.subscriptionType ?? null,
+    };
   } catch {
     return null;
   }
@@ -53,8 +66,8 @@ function normalizeWindow(w: RawWindow): QuotaWindow | null {
 }
 
 async function fetchQuota(): Promise<Quota | null> {
-  const token = await readKeychainToken();
-  if (!token) return null;
+  const creds = await readKeychain();
+  if (!creds) return null;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 4000);
@@ -65,7 +78,7 @@ async function fetchQuota(): Promise<Quota | null> {
       headers: {
         Accept: 'application/json, text/plain, */*',
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${creds.accessToken}`,
         'User-Agent': 'mystatus/0.1',
         'anthropic-beta': 'oauth-2025-04-20',
       },
@@ -74,6 +87,7 @@ async function fetchQuota(): Promise<Quota | null> {
     const data = (await res.json()) as RawResponse;
     return {
       fetchedAt: new Date().toISOString(),
+      subscription: creds.subscriptionType,
       fiveHour: normalizeWindow(data.five_hour),
       sevenDay: normalizeWindow(data.seven_day),
       sevenDayOpus: normalizeWindow(data.seven_day_opus),

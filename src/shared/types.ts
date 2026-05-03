@@ -45,6 +45,7 @@ export type QuotaWindow = {
 
 export type PlanQuota = {
   fetchedAt: string;
+  subscription: string | null;
   fiveHour: QuotaWindow | null;
   sevenDay: QuotaWindow | null;
   sevenDayOpus: QuotaWindow | null;

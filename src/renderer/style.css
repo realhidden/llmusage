@@ -178,6 +178,44 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  padding: 4px 0;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  border-radius: 4px;
+}
+
+.today-total:hover {
+  background: var(--bg-hover);
+}
+
+.today-total-caret {
+  font-size: 9px;
+  color: var(--fg-dim);
+  margin-left: -4px;
+}
+
+.today-detail {
+  margin-top: 8px;
+  padding: 8px;
+  background: var(--bg-panel);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.today-detail-heading {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  margin-bottom: 2px;
 }
 
 .today-stack {
