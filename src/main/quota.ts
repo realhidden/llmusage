@@ -180,6 +180,9 @@ type RawZaiLimit = {
   reset_at?: string;
   resetTime?: string;
   resetAt?: string;
+  unit?: number;
+  number?: number;
+  nextResetTime?: number;
 };
 type RawZaiResponse = {
   data?: { limits?: RawZaiLimit[] };
@@ -187,6 +190,9 @@ type RawZaiResponse = {
 };
 
 function pickResetField(l: RawZaiLimit): string | null {
+  if (typeof l.nextResetTime === 'number' && l.nextResetTime > 0) {
+    return new Date(l.nextResetTime).toISOString();
+  }
   return l.reset_at ?? l.resetAt ?? l.resetTime ?? null;
 }
 
@@ -197,6 +203,16 @@ function classifyLimitWindow(type: string | undefined): 'fiveHour' | 'sevenDay' 
   if (t.includes('7 day') || t.includes('weekly') || t.includes('week') || t.includes('7d')) return 'sevenDay';
   if (t.includes('opus')) return 'opus';
   return null;
+}
+
+function classifyLimit(l: RawZaiLimit): 'fiveHour' | 'sevenDay' | 'opus' | null {
+  if (typeof l.unit === 'number' && typeof l.number === 'number') {
+    if (l.unit === 6) return 'sevenDay';
+    if (l.unit === 3) return 'fiveHour';
+    if (l.unit === 5 && l.number >= 7) return 'sevenDay';
+    return null;
+  }
+  return classifyLimitWindow(l.type);
 }
 
 async function fetchZaiLike(provider: ProviderKind, token: string, baseUrl: string): Promise<Quota | null> {
@@ -223,7 +239,7 @@ async function fetchZaiLike(provider: ProviderKind, token: string, baseUrl: stri
     let sevenDay: QuotaWindow | null = null;
     let opus: QuotaWindow | null = null;
     for (const l of limits) {
-      const slot = classifyLimitWindow(l.type);
+      const slot = classifyLimit(l);
       if (!slot) continue;
       const pct = typeof l.percentage === 'number' ? l.percentage : null;
       if (pct == null) continue;
