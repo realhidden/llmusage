@@ -8,7 +8,7 @@ import { Watcher } from './claude/watcher.js';
 import { dirsFromConfig } from './claude/dirs.js';
 import { loadConfig, saveConfig } from './config.js';
 import { registerIPC, broadcast } from './ipc.js';
-import { getIcon, type IconState } from './tray-icon.js';
+import { getIcon, initIcons, type IconState } from './tray-icon.js';
 import type { StoreSnapshot, Config, DirLimits } from '../shared/types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -91,6 +91,10 @@ async function decorateSnapshot(snap: StoreSnapshot, config: Config): Promise<St
 
 app.whenReady().then(async () => {
   app.dock?.hide();
+
+  // Rasterize tray-icon SVGs once Chromium is ready, before we hand
+  // an icon to menubar()
+  await initIcons();
 
   store = new Store();
 
