@@ -5,9 +5,10 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { Store } from './claude/store.js';
 import { Watcher } from './claude/watcher.js';
+import { dirsFromConfig } from './claude/dirs.js';
 import { loadConfig, saveConfig } from './config.js';
 import { registerIPC, broadcast } from './ipc.js';
-import type { StoreSnapshot } from '../shared/types.js';
+import type { StoreSnapshot, Config, DirLimits } from '../shared/types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isDev = process.env.NODE_ENV === 'development';
@@ -80,13 +81,35 @@ function updateTrayIcon(snap: StoreSnapshot): void {
   tray.setToolTip(labels[state]);
 }
 
+const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+async function decorateSnapshot(snap: StoreSnapshot, config: Config): Promise<StoreSnapshot> {
+  if (config.limits) {
+    snap.limits.fiveHourTokens = config.limits.fiveHourTokens;
+    snap.limits.weeklyTokens = config.limits.weeklyTokens;
+  }
+  const dirs = dirsFromConfig(config);
+  const byDir: DirLimits[] = dirs.map(d => ({
+    path: d.path,
+    label: d.label,
+    fiveHourTokens: d.fiveHourTokens,
+    weeklyTokens: d.weeklyTokens,
+    fiveHourUsed: store.rollingByDir(d.path, FIVE_HOURS_MS),
+    weeklyUsed: store.rollingByDir(d.path, WEEK_MS),
+  }));
+  snap.limits.byDir = byDir;
+  return snap;
+}
+
 app.whenReady().then(async () => {
   app.dock?.hide();
 
   store = new Store();
 
   const initConfig = await loadConfig();
-  const dirs = initConfig.dataDirs ?? [join(homedir(), '.claude', 'projects')];
+  const normalizedDirs = dirsFromConfig(initConfig);
+  const dirs = normalizedDirs.map(d => d.path);
 
   watcher = new Watcher(store, {
     dirs,
@@ -142,8 +165,9 @@ app.whenReady().then(async () => {
       win.webContents.openDevTools({ mode: 'detach' });
     }
 
-    win.webContents.on('did-finish-load', () => {
-      const snap = store.snapshot();
+    win.webContents.on('did-finish-load', async () => {
+      const config = await loadConfig();
+      const snap = await decorateSnapshot(store.snapshot(), config);
       win.webContents.send('store:update', snap);
       updateTrayIcon(snap);
     });
@@ -155,12 +179,8 @@ app.whenReady().then(async () => {
     if (broadcastTimer) return;
     broadcastTimer = setTimeout(async () => {
       broadcastTimer = null;
-      const snap = store.snapshot();
       const config = await loadConfig();
-      if (config.limits) {
-        snap.limits.fiveHourTokens = config.limits.fiveHourTokens;
-        snap.limits.weeklyTokens = config.limits.weeklyTokens;
-      }
+      const snap = await decorateSnapshot(store.snapshot(), config);
       const win = mb?.window;
       if (win && !win.isDestroyed()) {
         win.webContents.send('store:update', snap);
@@ -177,13 +197,8 @@ app.whenReady().then(async () => {
 
   registerIPC(ipcMain, {
     'store:snapshot': async () => {
-      const snap = store.snapshot();
       const config = await loadConfig();
-      if (config.limits) {
-        snap.limits.fiveHourTokens = config.limits.fiveHourTokens;
-        snap.limits.weeklyTokens = config.limits.weeklyTokens;
-      }
-      return snap;
+      return decorateSnapshot(store.snapshot(), config);
     },
     'config:get': async () => loadConfig(),
     'config:set': async (_event, args) => saveConfig(args as Partial<import('../shared/types.js').Config>),

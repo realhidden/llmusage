@@ -36,12 +36,15 @@ export function renderSettings(container: HTMLElement, config: Config): void {
   // Render directory list
   const dirList = panel.querySelector('#dir-list')!;
   const dirs = config.dataDirs ?? [];
-  dirList.innerHTML = dirs.map((dir, i) => `
+  dirList.innerHTML = dirs.map((dir, i) => {
+    const path = typeof dir === 'string' ? dir : dir.path;
+    return `
     <div class="settings-dir-row">
-      <span class="settings-dir-path">${escapeHtml(dir)}</span>
+      <span class="settings-dir-path">${escapeHtml(path)}</span>
       <button class="settings-dir-remove" data-index="${i}">&times;</button>
     </div>
-  `).join('');
+  `;
+  }).join('');
 
   // Bind close
   panel.querySelector('#settings-close')!.addEventListener('click', () => {

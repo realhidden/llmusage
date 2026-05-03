@@ -29,6 +29,15 @@ export type SessionState = {
   assistantTurns: number;
 };
 
+export type DirLimits = {
+  path: string;
+  label: string;
+  fiveHourTokens?: number;
+  weeklyTokens?: number;
+  fiveHourUsed: number;
+  weeklyUsed: number;
+};
+
 export type StoreSnapshot = {
   generatedAt: string;
   today: UsageBucket;
@@ -42,8 +51,13 @@ export type StoreSnapshot = {
     weeklyTokens?: number;
     fiveHourUsed: number;
     weeklyUsed: number;
+    byDir: DirLimits[];
   };
 };
+
+export type DataDirEntry =
+  | string
+  | { path: string; label?: string; fiveHourTokens?: number; weeklyTokens?: number };
 
 export type Config = {
   plan?: string;
@@ -52,7 +66,7 @@ export type Config = {
     weeklyTokens?: number;
   };
   autoLaunch?: boolean;
-  dataDirs?: string[];
+  dataDirs?: DataDirEntry[];
 };
 
 export type Invokes = {

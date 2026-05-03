@@ -40,6 +40,7 @@ function emptyUsageBucket(): UsageBucket {
 type TimestampedTokens = {
   ts: number;
   total: number;
+  dir: string;
 };
 
 export type SessionFileState = {
@@ -77,7 +78,7 @@ export class Store {
     for (const fn of this.listeners) fn();
   }
 
-  ingest(filePath: string, events: RawEvent[]): void {
+  ingest(filePath: string, events: RawEvent[], dir: string = ''): void {
     if (events.length === 0) return;
 
     let session = this.bySession.get(filePath);
@@ -141,6 +142,7 @@ export class Store {
         this.tokenEvents.push({
           ts: new Date(ev.timestamp).getTime(),
           total: bucketTotal(tk),
+          dir,
         });
 
         // Day aggregation
@@ -183,11 +185,13 @@ export class Store {
     this.tokenEvents = [];
   }
 
-  private rollingWindowTotal(msAgo: number): number {
+  private rollingWindowTotal(msAgo: number, dir?: string): number {
     const cutoff = Date.now() - msAgo;
     let total = 0;
     for (const te of this.tokenEvents) {
-      if (te.ts >= cutoff) total += te.total;
+      if (te.ts < cutoff) continue;
+      if (dir !== undefined && te.dir !== dir) continue;
+      total += te.total;
     }
     return total;
   }
@@ -264,7 +268,12 @@ export class Store {
       limits: {
         fiveHourUsed: this.rollingWindowTotal(5 * 60 * 60 * 1000),
         weeklyUsed: this.rollingWindowTotal(7 * 24 * 60 * 60 * 1000),
+        byDir: [],
       },
     };
+  }
+
+  rollingByDir(dir: string, msAgo: number): number {
+    return this.rollingWindowTotal(msAgo, dir);
   }
 }

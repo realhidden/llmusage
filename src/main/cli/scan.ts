@@ -1,13 +1,12 @@
-import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { Store } from '../claude/store.js';
 import { Watcher } from '../claude/watcher.js';
+import { dirsFromConfig } from '../claude/dirs.js';
 import { loadConfig } from '../config.js';
 import { formatCompact } from '../../shared/time.js';
 
 async function main(): Promise<void> {
   const config = await loadConfig();
-  const dirs = config.dataDirs ?? [join(homedir(), '.claude', 'projects')];
+  const dirs = dirsFromConfig(config).map(d => d.path);
 
   console.log(`Scanning ${dirs.length} director${dirs.length === 1 ? 'y' : 'ies'}:`);
   for (const d of dirs) console.log(`  ${d}`);

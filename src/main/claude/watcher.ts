@@ -20,6 +20,7 @@ export class Watcher {
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private debounceMs: number;
   private dirs: string[];
+  private fileToDir = new Map<string, string>();
   private onError?: (scope: string, message: string) => void;
 
   constructor(store: Store, opts?: {
@@ -37,6 +38,7 @@ export class Watcher {
     for (const dir of this.dirs) {
       const files = await listSessionFiles(dir);
       for (const filePath of files) {
+        this.fileToDir.set(filePath, dir);
         try {
           const s = await stat(filePath);
           const content = await readFile(filePath, 'utf-8');
@@ -47,7 +49,7 @@ export class Watcher {
             offset: s.size - remainder.length,
             partialLine: remainder,
           });
-          this.store.ingest(filePath, events);
+          this.store.ingest(filePath, events, dir);
         } catch (err) {
           this.onError?.('cold-scan', `Failed to read ${filePath}: ${String(err)}`);
         }
@@ -61,6 +63,7 @@ export class Watcher {
         const w = watch(dir, { recursive: true }, (_event, filename) => {
           if (!filename || !filename.endsWith('.jsonl')) return;
           const fullPath = dir + '/' + filename.replace(/\\/g, '/');
+          this.fileToDir.set(fullPath, dir);
           this.markDirty(fullPath);
         });
         this.watchers.push(w);
@@ -138,7 +141,7 @@ export class Watcher {
       partialLine: remainder,
     });
 
-    this.store.ingest(filePath, events);
+    this.store.ingest(filePath, events, this.fileToDir.get(filePath) ?? '');
   }
 
   private async coldReadFile(filePath: string, s: { ino: number; size: number }): Promise<void> {
@@ -150,7 +153,7 @@ export class Watcher {
       offset: s.size - remainder.length,
       partialLine: remainder,
     });
-    this.store.ingest(filePath, events);
+    this.store.ingest(filePath, events, this.fileToDir.get(filePath) ?? '');
   }
 }
 
