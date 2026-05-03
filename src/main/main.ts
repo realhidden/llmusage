@@ -15,6 +15,70 @@ const isDev = process.env.NODE_ENV === 'development';
 let store: Store;
 let watcher: Watcher;
 let mb: ReturnType<typeof menubar> | null = null;
+let lastIconState = '';
+
+type IconState = 'idle' | 'running' | 'waiting';
+
+function makeIcon(state: IconState): Electron.NativeImage {
+  const size = 22;
+  const rgba = Buffer.alloc(size * size * 4, 0);
+  const cx = size / 2, cy = size / 2;
+
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = (x - cx) / (size / 2);
+      const dy = (y - cy) / (size / 2);
+      const r = Math.sqrt(dx * dx * 1.1 + dy * dy * 1.3);
+
+      if (r >= 0.88) continue;
+      const edge = Math.min(1, (0.88 - r) * size / 2.5);
+
+      let alpha = Math.floor(edge * 220);
+      let red = 0, green = 0, blue = 0;
+
+      if (state === 'running') {
+        // Green brain
+        red = 0x34; green = 0xc7; blue = 0x59;
+        alpha = Math.floor(edge * 230);
+      } else if (state === 'waiting') {
+        // Amber brain
+        red = 0xff; green = 0x9f; blue = 0x0a;
+        alpha = Math.floor(edge * 220);
+      }
+      // idle: plain black (template-compatible)
+
+      const i = (y * size + x) * 4;
+      rgba[i] = red;
+      rgba[i + 1] = green;
+      rgba[i + 2] = blue;
+      rgba[i + 3] = alpha;
+    }
+  }
+
+  return nativeImage.createFromBuffer(rgba, { width: size, height: size });
+}
+
+function updateTrayIcon(snap: StoreSnapshot): void {
+  const tray = mb?.tray;
+  if (!tray) return;
+
+  const hasRunning = snap.sessions.active.some(s => s.state === 'running');
+  const hasWaiting = snap.sessions.active.some(s => s.state === 'waiting-for-input');
+  let state: IconState = 'idle';
+  if (hasRunning) state = 'running';
+  else if (hasWaiting) state = 'waiting';
+
+  if (state === lastIconState) return;
+  lastIconState = state;
+  tray.setImage(makeIcon(state));
+
+  const labels: Record<IconState, string> = {
+    running: 'mystatus — working',
+    waiting: 'mystatus — waiting for input',
+    idle: 'mystatus — idle',
+  };
+  tray.setToolTip(labels[state]);
+}
 
 app.whenReady().then(async () => {
   app.dock?.hide();
@@ -32,16 +96,6 @@ app.whenReady().then(async () => {
   });
 
   await watcher.coldScan();
-
-  // Create tray icon (16x16 template image)
-  const iconPath = join(__dirname, '..', '..', '..', 'build', 'icons', 'trayTemplate.png');
-  let trayIcon: Electron.NativeImage;
-  try {
-    trayIcon = nativeImage.createFromPath(iconPath);
-    if (trayIcon.isEmpty()) trayIcon = createDefaultIcon();
-  } catch {
-    trayIcon = createDefaultIcon();
-  }
 
   const rendererUrl = isDev
     ? 'http://localhost:5173'
@@ -65,16 +119,13 @@ app.whenReady().then(async () => {
         nodeIntegration: false,
       },
     },
-    icon: trayIcon,
+    icon: makeIcon('idle'),
     showDockIcon: false,
-    tooltip: 'mystatus — Claude Code usage',
+    tooltip: 'mystatus — idle',
     index: rendererUrl,
   });
 
   mb.on('ready', () => {
-    mb?.tray?.setToolTip('mystatus — Claude Code usage');
-
-    // Right-click for quit, left-click opens popup (menubar default)
     mb?.tray?.on('right-click', () => {
       const contextMenu = Menu.buildFromTemplate([
         { label: 'Quit mystatus', click: () => app.quit() },
@@ -91,13 +142,14 @@ app.whenReady().then(async () => {
       win.webContents.openDevTools({ mode: 'detach' });
     }
 
-    // Send initial snapshot once page is ready
     win.webContents.on('did-finish-load', () => {
-      win.webContents.send('store:update', store.snapshot());
+      const snap = store.snapshot();
+      win.webContents.send('store:update', snap);
+      updateTrayIcon(snap);
     });
   });
 
-  // Store change -> broadcast
+  // Store change -> broadcast + update icon
   let broadcastTimer: ReturnType<typeof setTimeout> | null = null;
   store.onChange(() => {
     if (broadcastTimer) return;
@@ -113,18 +165,16 @@ app.whenReady().then(async () => {
       if (win && !win.isDestroyed()) {
         win.webContents.send('store:update', snap);
       }
+      updateTrayIcon(snap);
     }, 200);
   });
 
-  // Auto-launch
   if (initConfig.autoLaunch) {
     app.setLoginItemSettings({ openAtLogin: true });
   }
 
-  // Start file watcher
   watcher.start();
 
-  // IPC handlers
   registerIPC(ipcMain, {
     'store:snapshot': async () => {
       const snap = store.snapshot();
@@ -148,21 +198,3 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   // Don't quit — menu bar apps stay alive
 });
-
-function createDefaultIcon(): Electron.NativeImage {
-  const size = 16;
-  const rgba = Buffer.alloc(size * size * 4, 0);
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const dx = x - 7.5, dy = y - 7.5;
-      if (dx * dx + dy * dy <= 36) {
-        const i = (y * size + x) * 4;
-        rgba[i] = 0;
-        rgba[i + 1] = 0;
-        rgba[i + 2] = 0;
-        rgba[i + 3] = 200;
-      }
-    }
-  }
-  return nativeImage.createFromBuffer(rgba, { width: size, height: size });
-}

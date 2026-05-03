@@ -13,9 +13,19 @@ const headerWaiting = document.getElementById('header-waiting') as HTMLElement;
 const statusDot = document.getElementById('status-dot') as HTMLElement;
 const quitBtn = document.getElementById('header-quit') as HTMLElement;
 const gearBtn = document.getElementById('header-gear') as HTMLElement;
+const refreshBtn = document.getElementById('header-refresh') as HTMLElement;
 
 quitBtn?.addEventListener('click', () => {
   (window as any).api.invoke('app:quit');
+});
+
+refreshBtn?.addEventListener('click', () => {
+  refreshBtn.classList.add('spinning');
+  (window as any).api.invoke('store:snapshot').then((snap: StoreSnapshot) => {
+    lastSnapshot = snap;
+    render(snap);
+    setTimeout(() => refreshBtn.classList.remove('spinning'), 200);
+  });
 });
 
 gearBtn?.addEventListener('click', () => {

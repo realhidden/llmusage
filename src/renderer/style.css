@@ -125,6 +125,26 @@ body {
   color: var(--fg-accent);
 }
 
+.header-refresh {
+  background: none;
+  border: none;
+  color: var(--fg-dim);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+  margin-left: 4px;
+  transition: transform 200ms ease;
+}
+
+.header-refresh:hover {
+  color: var(--fg-accent);
+}
+
+.header-refresh.spinning {
+  transform: rotate(360deg);
+}
+
 .header-quit:hover {
   color: var(--red);
 }
@@ -257,8 +277,8 @@ body {
 .week-chart {
   display: flex;
   align-items: flex-end;
-  gap: 4px;
-  height: 90px;
+  gap: 6px;
+  height: 70px;
   padding: 0 4px;
 }
 
@@ -268,16 +288,17 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: flex-end;
-  gap: 4px;
+  height: 100%;
 }
 
 .week-bar-stack {
-  width: 100%;
+  width: 70%;
   display: flex;
   flex-direction: column;
   gap: 1px;
-  border-radius: 3px 3px 0 0;
+  border-radius: 2px 2px 0 0;
   overflow: hidden;
+  cursor: default;
 }
 
 .week-bar-segment {
@@ -289,6 +310,8 @@ body {
 .week-day {
   font-size: 10px;
   color: var(--fg-dim);
+  margin-top: 4px;
+  flex-shrink: 0;
 }
 
 /* Sessions */

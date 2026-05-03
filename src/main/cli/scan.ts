@@ -1,16 +1,25 @@
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { Store } from '../claude/store.js';
 import { Watcher } from '../claude/watcher.js';
+import { loadConfig } from '../config.js';
 import { formatCompact } from '../../shared/time.js';
 
 async function main(): Promise<void> {
+  const config = await loadConfig();
+  const dirs = config.dataDirs ?? [join(homedir(), '.claude', 'projects')];
+
+  console.log(`Scanning ${dirs.length} director${dirs.length === 1 ? 'y' : 'ies'}:`);
+  for (const d of dirs) console.log(`  ${d}`);
+
   const store = new Store();
   const watcher = new Watcher(store, {
+    dirs,
     onError: (scope, message) => {
       console.error(`[${scope}] ${message}`);
     },
   });
 
-  console.log('Scanning ~/.claude/projects/ ...');
   await watcher.coldScan();
 
   const snap = store.snapshot();
@@ -33,9 +42,12 @@ async function main(): Promise<void> {
   }
 
   console.log('\n=== LAST 7 DAYS ===');
+  const max7 = Math.max(...snap.last7Days.map(d => {
+    const b = d.bucket.tokens;
+    return b.input + b.output + b.cacheCreate + b.cacheRead;
+  }), 1);
   for (const { day, bucket } of snap.last7Days) {
     const total = bucket.tokens.input + bucket.tokens.output + bucket.tokens.cacheCreate + bucket.tokens.cacheRead;
-    const max7 = Math.max(...snap.last7Days.map(d => d.bucket.tokens.input + d.bucket.tokens.output + d.bucket.tokens.cacheCreate + d.bucket.tokens.cacheRead), 1);
     const bar = '█'.repeat(Math.min(Math.round((total / max7) * 30), 30));
     console.log(`  ${day}  ${bar}  ${formatCompact(total)}`);
   }
