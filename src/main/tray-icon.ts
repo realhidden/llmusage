@@ -4,8 +4,13 @@ export type IconState = 'idle' | 'running' | 'waiting';
 
 const SIZE = 22;
 const SCALE = 2;       // render at 2x for crispness, then resize
-const ART_SIZE = 16;   // artwork inset inside the 22x22 frame; macOS menu
-                       // bar clips icons that paint to the edges
+const ART_SIZE = 20;   // artwork size inside the 22x22 frame; small inset
+                       // keeps the rounded stroke caps off the menu bar edge
+
+// Lucide uses viewBox 0 0 24 24 but the brain-circuit artwork only spans
+// roughly [2, 22] x [2, 22], so rendering the full viewBox shrinks the
+// visible icon by ~17%. Crop to the actual artwork bounds.
+const VIEWBOX = '2 2 20 20';
 
 // Lucide brain-circuit (ISC / MIT-licensed, same visual style as FA's Pro
 // brain-circuit-light). Rendered through Chromium so we avoid bundling a
@@ -29,7 +34,7 @@ const SVG_PATHS = `
 function svgFor(stroke: string, fillNodes: string = 'none'): string {
   // Stroke-based line art; nodes (small circles) get a solid fill so the
   // dots stay visible at small render sizes.
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${ART_SIZE * SCALE}" height="${ART_SIZE * SCALE}" viewBox="0 0 24 24" fill="none" stroke="${stroke}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${ART_SIZE * SCALE}" height="${ART_SIZE * SCALE}" viewBox="${VIEWBOX}" fill="none" stroke="${stroke}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
     <g>${SVG_PATHS}</g>
     <style>circle { fill: ${fillNodes}; stroke: ${stroke}; }</style>
   </svg>`;
