@@ -37,6 +37,10 @@ app.whenReady().then(async () => {
     trayIcon = createDefaultIcon();
   }
 
+  const rendererUrl = isDev
+    ? 'http://localhost:5173'
+    : `file://${join(__dirname, '..', '..', 'renderer', 'index.html')}`;
+
   mb = menubar({
     browserWindow: {
       width: 360,
@@ -58,17 +62,19 @@ app.whenReady().then(async () => {
     icon: trayIcon,
     showDockIcon: false,
     tooltip: 'mystatus — Claude Code usage',
+    index: rendererUrl,
   });
 
   mb.on('ready', () => {
     mb?.tray?.setToolTip('mystatus — Claude Code usage');
 
-    const contextMenu = Menu.buildFromTemplate([
-      { label: 'Open', click: () => mb?.showWindow() },
-      { type: 'separator' },
-      { label: 'Quit', click: () => app.quit() },
-    ]);
-    mb?.tray?.setContextMenu(contextMenu);
+    // Right-click for quit, left-click opens popup (menubar default)
+    mb?.tray?.on('right-click', () => {
+      const contextMenu = Menu.buildFromTemplate([
+        { label: 'Quit mystatus', click: () => app.quit() },
+      ]);
+      mb?.tray?.popUpContextMenu(contextMenu);
+    });
   });
 
   mb.on('after-create-window', () => {
@@ -76,13 +82,10 @@ app.whenReady().then(async () => {
     if (!win) return;
 
     if (isDev) {
-      win.loadURL('http://localhost:5173');
       win.webContents.openDevTools({ mode: 'detach' });
-    } else {
-      win.loadFile(join(__dirname, '..', '..', 'renderer', 'index.html'));
     }
 
-    // Send initial snapshot
+    // Send initial snapshot once page is ready
     win.webContents.on('did-finish-load', () => {
       win.webContents.send('store:update', store.snapshot());
     });
