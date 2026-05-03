@@ -38,6 +38,18 @@ export type DirLimits = {
   weeklyUsed: number;
 };
 
+export type QuotaWindow = {
+  utilization: number;       // 0–100
+  resetsAt: string | null;
+};
+
+export type PlanQuota = {
+  fetchedAt: string;
+  fiveHour: QuotaWindow | null;
+  sevenDay: QuotaWindow | null;
+  sevenDayOpus: QuotaWindow | null;
+};
+
 export type StoreSnapshot = {
   generatedAt: string;
   today: UsageBucket;
@@ -52,6 +64,7 @@ export type StoreSnapshot = {
     fiveHourUsed: number;
     weeklyUsed: number;
     byDir: DirLimits[];
+    plan?: PlanQuota | null;
   };
 };
 

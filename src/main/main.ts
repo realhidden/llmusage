@@ -9,6 +9,7 @@ import { dirsFromConfig } from './claude/dirs.js';
 import { loadConfig, saveConfig } from './config.js';
 import { registerIPC, broadcast } from './ipc.js';
 import { getIcon, initIcons, type IconState } from './tray-icon.js';
+import { getQuota } from './quota.js';
 import type { StoreSnapshot, Config, DirLimits } from '../shared/types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -86,6 +87,7 @@ async function decorateSnapshot(snap: StoreSnapshot, config: Config): Promise<St
     weeklyUsed: store.rollingByDir(d.path, WEEK_MS),
   }));
   snap.limits.byDir = byDir;
+  snap.limits.plan = await getQuota();
   return snap;
 }
 

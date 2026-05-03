@@ -238,30 +238,47 @@ body {
 .today-stat-dot.cache-down { background: var(--bar-cache-down); }
 
 /* Limit bars */
-.limit-row {
+#today-limits {
+  margin-top: 6px;
   display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.limits-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.limits-heading {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  margin-bottom: 2px;
+}
+
+.limit-row {
+  display: grid;
+  grid-template-columns: 56px 1fr 36px 36px;
   align-items: center;
   gap: 6px;
   font-size: 10px;
   line-height: 14px;
+  font-variant-numeric: tabular-nums;
 }
 
 .limit-label {
-  width: 36px;
   color: var(--fg-dim);
-  flex-shrink: 0;
-}
-
-.limit-sub {
-  width: 22px;
-  color: var(--fg-dim);
-  flex-shrink: 0;
-  font-size: 9px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .limit-track {
-  flex: 1;
-  height: 3px;
+  height: 4px;
   background: var(--bar-bg);
   border-radius: 2px;
   overflow: hidden;
@@ -276,43 +293,21 @@ body {
 .limit-fill.ok { background: var(--green); }
 .limit-fill.warn { background: var(--amber); }
 .limit-fill.danger { background: var(--red); }
+.limit-fill.unconfigured { background: var(--fg-dim); opacity: 0.5; }
 
-.limit-text {
-  font-size: 9px;
-  color: var(--fg-dim);
-  min-width: 36px;
-  text-align: right;
-  flex-shrink: 0;
-  font-variant-numeric: tabular-nums;
-}
-
-/* Per-tool limit groups */
-#today-limits {
-  margin-top: 6px;
-}
-
-.limit-dir-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 4px;
-}
-
-.limit-dir-label {
-  width: 50px;
-  font-size: 10px;
+.limit-pct {
   color: var(--fg);
-  font-weight: 500;
-  flex-shrink: 0;
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
+  text-align: right;
+  font-size: 10px;
 }
 
-.limit-dir-bars {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
+.limit-reset {
+  color: var(--fg-dim);
+  text-align: right;
+  font-size: 9px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Model list (today) */
