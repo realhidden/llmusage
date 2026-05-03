@@ -96,6 +96,7 @@ export type Invokes = {
   'config:set': { req: Partial<Config>; res: Config };
   'app:openProject': { req: { cwd: string }; res: void };
   'app:quit': { req: {}; res: void };
+  'app:version': { req: {}; res: string };
 };
 
 export type Events = {

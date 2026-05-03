@@ -210,6 +210,7 @@ app.whenReady().then(async () => {
       shell.showItemInFolder(cwd);
     },
     'app:quit': async () => app.quit(),
+    'app:version': async () => app.getVersion(),
   });
 });
 

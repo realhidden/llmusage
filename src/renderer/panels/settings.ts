@@ -28,6 +28,10 @@ export function renderSettings(container: HTMLElement, config: Config): void {
           <button id="dir-add-btn">Add</button>
         </div>
       </div>
+
+      <div class="settings-footer">
+        <a class="settings-version-link" href="https://github.com/realhidden/llmusage/releases" target="_blank">v—</a>
+      </div>
     </div>
   `;
 
@@ -78,6 +82,12 @@ export function renderSettings(container: HTMLElement, config: Config): void {
       const freshConfig = await (window as any).api.invoke('config:get') as Config;
       renderSettings(container, freshConfig);
     });
+  });
+
+  // Populate version link
+  (window as any).api.invoke('app:version').then((v: string) => {
+    const link = panel.querySelector('.settings-version-link') as HTMLAnchorElement;
+    if (link) link.textContent = `v${v}`;
   });
 }
 

@@ -705,3 +705,18 @@ body {
 .settings-add-dir button:hover {
   opacity: 0.85;
 }
+
+.settings-footer {
+  margin-top: 12px;
+  text-align: right;
+}
+
+.settings-version-link {
+  font-size: 10px;
+  color: var(--fg-dim);
+  text-decoration: none;
+}
+
+.settings-version-link:hover {
+  color: var(--fg-accent);
+}
