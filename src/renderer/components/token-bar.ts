@@ -5,12 +5,26 @@ const MODEL_COLORS: Record<string, string> = {
   'claude-sonnet-4-6': '#a6e3a1',
   'claude-haiku-4-5': '#f9e2af',
   'claude-haiku-4-5-20251001': '#f9e2af',
+  'glm-5.1': '#f38ba8',
+  'glm-5-turbo': '#fab387',
+  'glm-4.5-air': '#94e2d5',
 };
 
-const UNKNOWN_COLOR = '#cba6f7';
-
 export function modelColor(model: string): string {
-  return MODEL_COLORS[model] ?? UNKNOWN_COLOR;
+  return MODEL_COLORS[model] ?? '#cba6f7';
+}
+
+export function modelShort(model: string): string {
+  const map: Record<string, string> = {
+    'claude-opus-4-7': 'opus',
+    'claude-sonnet-4-6': 'sonnet',
+    'claude-haiku-4-5': 'haiku',
+    'claude-haiku-4-5-20251001': 'haiku',
+    'glm-5.1': 'glm-5.1',
+    'glm-5-turbo': 'glm-5t',
+    'glm-4.5-air': 'glm-4.5',
+  };
+  return map[model] ?? model.replace('claude-', '').replace('-20251001', '');
 }
 
 export function formatCompact(n: number): string {

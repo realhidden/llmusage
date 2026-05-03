@@ -110,6 +110,21 @@ body {
   margin-left: 4px;
 }
 
+.header-gear {
+  background: none;
+  border: none;
+  color: var(--fg-dim);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+  margin-left: 4px;
+}
+
+.header-gear:hover {
+  color: var(--fg-accent);
+}
+
 .header-quit:hover {
   color: var(--red);
 }
@@ -135,12 +150,12 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 4px;
-  height: 20px;
+  margin-bottom: 2px;
+  height: 16px;
 }
 
 .token-bar-label {
-  width: 64px;
+  width: 56px;
   font-size: 11px;
   color: var(--fg-dim);
   text-align: right;
@@ -243,7 +258,7 @@ body {
   display: flex;
   align-items: flex-end;
   gap: 4px;
-  height: 80px;
+  height: 90px;
   padding: 0 4px;
 }
 
@@ -252,15 +267,14 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: flex-end;
   gap: 4px;
-  height: 100%;
 }
 
 .week-bar-stack {
-  flex: 1;
   width: 100%;
   display: flex;
-  flex-direction: column-reverse;
+  flex-direction: column;
   gap: 1px;
   border-radius: 3px 3px 0 0;
   overflow: hidden;
@@ -268,14 +282,8 @@ body {
 
 .week-bar-segment {
   width: 100%;
+  border-radius: 1px;
   transition: height 200ms ease;
-  min-height: 0;
-}
-
-.week-bar-segment.empty {
-  background: var(--bar-bg);
-  min-height: 4px;
-  flex: 1;
 }
 
 .week-day {
@@ -459,4 +467,94 @@ body {
 ::-webkit-scrollbar-thumb {
   background: var(--fg-dim);
   border-radius: 2px;
+}
+
+/* Settings */
+.settings-close {
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--fg-dim);
+}
+
+.settings-close:hover {
+  color: var(--fg);
+}
+
+.settings-section {
+  margin-top: 10px;
+}
+
+.settings-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--fg);
+}
+
+.settings-dir-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.06);
+}
+
+.settings-dir-path {
+  flex: 1;
+  font-size: 11px;
+  font-family: monospace;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-dir-remove {
+  background: none;
+  border: none;
+  color: var(--fg-dim);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.settings-dir-remove:hover {
+  color: var(--red);
+}
+
+.settings-add-dir {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.settings-add-dir input {
+  flex: 1;
+  background: var(--bg-panel);
+  border: 1px solid rgba(128, 128, 128, 0.2);
+  border-radius: 4px;
+  color: var(--fg);
+  font-size: 11px;
+  font-family: monospace;
+  padding: 4px 8px;
+  outline: none;
+}
+
+.settings-add-dir input:focus {
+  border-color: var(--fg-accent);
+}
+
+.settings-add-dir button {
+  background: var(--fg-accent);
+  border: none;
+  border-radius: 4px;
+  color: var(--bg);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.settings-add-dir button:hover {
+  opacity: 0.85;
 }

@@ -52,6 +52,7 @@ export type Config = {
     weeklyTokens?: number;
   };
   autoLaunch?: boolean;
+  dataDirs?: string[];
 };
 
 export type Invokes = {

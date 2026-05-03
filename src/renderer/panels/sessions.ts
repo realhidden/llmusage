@@ -1,5 +1,5 @@
 import type { StoreSnapshot, SessionState } from '../../shared/types.js';
-import { formatCompact, bucketTotal, timeAgo, modelColor } from '../components/token-bar.js';
+import { formatCompact, bucketTotal, timeAgo, modelColor, modelShort } from '../components/token-bar.js';
 
 let expandedSessionId: string | null = null;
 
@@ -62,7 +62,7 @@ export function renderSessions(container: HTMLElement, snapshot: StoreSnapshot):
 function renderSessionRow(s: SessionState): string {
   const name = s.cwd.split('/').pop() ?? s.cwd;
   const total = bucketTotal(s.tokens);
-  const models = s.models.map(m => m.replace('claude-', '').replace('-20251001', '')).join(', ');
+  const models = s.models.map(m => modelShort(m)).join(', ');
   const stateLabel = s.state === 'waiting-for-input' ? 'waiting' : s.state;
 
   const isExpanded = expandedSessionId === s.sessionId;
@@ -122,7 +122,7 @@ function renderSessionDetail(s: SessionState): string {
       html += `<div class="session-detail-row">
         <span style="display:flex;align-items:center;gap:4px">
           <span class="model-dot" style="background:${color};width:6px;height:6px;border-radius:50%;display:inline-block"></span>
-          ${model.replace('claude-', '')}
+          ${modelShort(model)}
         </span>
         <span>${formatCompact(total)}</span>
       </div>`;

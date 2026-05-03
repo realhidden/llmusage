@@ -1,7 +1,9 @@
 import type { StoreSnapshot } from '../../shared/types.js';
 import { formatCompact, bucketTotal, modelColor } from '../components/token-bar.js';
 
-const MODEL_ORDER = ['claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5', 'claude-haiku-4-5-20251001'];
+const MODEL_ORDER = ['claude-opus-4-7', 'glm-5.1', 'claude-sonnet-4-6', 'glm-5-turbo', 'claude-haiku-4-5', 'glm-4.5-air'];
+
+const MAX_BAR_PX = 64;
 
 export function renderWeek(container: HTMLElement, snapshot: StoreSnapshot): void {
   const chartEl = container.querySelector('#week-chart') as HTMLElement;
@@ -16,16 +18,18 @@ export function renderWeek(container: HTMLElement, snapshot: StoreSnapshot): voi
     const group = document.createElement('div');
     group.className = 'week-bar-group';
 
-    const stack = document.createElement('div');
-    stack.className = 'week-bar-stack';
-
     const total = bucketTotal(bucket.tokens);
+
     if (total === 0) {
-      const empty = document.createElement('div');
-      empty.className = 'week-bar-segment empty';
-      stack.appendChild(empty);
+      const emptyStack = document.createElement('div');
+      emptyStack.className = 'week-bar-stack';
+      emptyStack.style.height = `${4}px`;
+      emptyStack.style.background = 'var(--bar-bg)';
+      emptyStack.style.borderRadius = '3px 3px 0 0';
+      group.appendChild(emptyStack);
     } else {
-      // Sort models by MODEL_ORDER
+      const stack = document.createElement('div');
+      stack.className = 'week-bar-stack';
       const models = Object.entries(bucket.byModel).sort((a, b) => {
         const ai = MODEL_ORDER.indexOf(a[0]);
         const bi = MODEL_ORDER.indexOf(b[0]);
@@ -35,15 +39,14 @@ export function renderWeek(container: HTMLElement, snapshot: StoreSnapshot): voi
       for (const [model, modelBucket] of models) {
         const seg = document.createElement('div');
         seg.className = 'week-bar-segment';
-        const pct = (bucketTotal(modelBucket) / maxTotal) * 100;
-        seg.style.height = `${pct}%`;
+        const px = Math.max(Math.round((bucketTotal(modelBucket) / maxTotal) * MAX_BAR_PX), 2);
+        seg.style.height = `${px}px`;
         seg.style.background = modelColor(model);
         seg.title = `${model}: ${formatCompact(bucketTotal(modelBucket))}`;
         stack.appendChild(seg);
       }
+      group.appendChild(stack);
     }
-
-    group.appendChild(stack);
 
     const label = document.createElement('div');
     label.className = 'week-day';

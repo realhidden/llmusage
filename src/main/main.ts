@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, nativeImage, shell, Tray, Menu } from 'electron';
 import { menubar } from 'menubar';
 import { join, dirname } from 'node:path';
+import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { Store } from './claude/store.js';
 import { Watcher } from './claude/watcher.js';
@@ -19,7 +20,12 @@ app.whenReady().then(async () => {
   app.dock?.hide();
 
   store = new Store();
+
+  const initConfig = await loadConfig();
+  const dirs = initConfig.dataDirs ?? [join(homedir(), '.claude', 'projects')];
+
   watcher = new Watcher(store, {
+    dirs,
     onError: (scope, message) => {
       console.error(`[${scope}] ${message}`);
     },
@@ -111,8 +117,7 @@ app.whenReady().then(async () => {
   });
 
   // Auto-launch
-  const config = await loadConfig();
-  if (config.autoLaunch) {
+  if (initConfig.autoLaunch) {
     app.setLoginItemSettings({ openAtLogin: true });
   }
 

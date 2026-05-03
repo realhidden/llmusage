@@ -3,7 +3,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import type { Store } from './store.js';
 import { parseBuffer } from './parser.js';
-import { listSessionFiles, projectsDir } from './paths.js';
+import { listSessionFiles } from './paths.js';
 
 type FileOffset = {
   inode: number;
@@ -13,64 +13,66 @@ type FileOffset = {
 };
 
 export class Watcher {
-  private watcher: FSWatcher | null = null;
+  private watchers: FSWatcher[] = [];
   private offsets = new Map<string, FileOffset>();
   private store: Store;
   private dirtyFiles = new Set<string>();
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private debounceMs: number;
-  private dir: string;
+  private dirs: string[];
   private onError?: (scope: string, message: string) => void;
 
   constructor(store: Store, opts?: {
-    dir?: string;
+    dirs?: string[];
     debounceMs?: number;
     onError?: (scope: string, message: string) => void;
   }) {
     this.store = store;
-    this.dir = opts?.dir ?? projectsDir();
+    this.dirs = opts?.dirs ?? [];
     this.debounceMs = opts?.debounceMs ?? 200;
     this.onError = opts?.onError;
   }
 
   async coldScan(): Promise<void> {
-    const files = await listSessionFiles(this.dir);
-
-    for (const filePath of files) {
-      try {
-        const s = await stat(filePath);
-        const content = await readFile(filePath, 'utf-8');
-        const { events, remainder } = parseBuffer(content);
-
-        this.offsets.set(filePath, {
-          inode: s.ino,
-          size: s.size,
-          offset: s.size - remainder.length,
-          partialLine: remainder,
-        });
-
-        this.store.ingest(filePath, events);
-      } catch (err) {
-        this.onError?.('cold-scan', `Failed to read ${filePath}: ${String(err)}`);
+    for (const dir of this.dirs) {
+      const files = await listSessionFiles(dir);
+      for (const filePath of files) {
+        try {
+          const s = await stat(filePath);
+          const content = await readFile(filePath, 'utf-8');
+          const { events, remainder } = parseBuffer(content);
+          this.offsets.set(filePath, {
+            inode: s.ino,
+            size: s.size,
+            offset: s.size - remainder.length,
+            partialLine: remainder,
+          });
+          this.store.ingest(filePath, events);
+        } catch (err) {
+          this.onError?.('cold-scan', `Failed to read ${filePath}: ${String(err)}`);
+        }
       }
     }
   }
 
   start(): void {
-    try {
-      this.watcher = watch(this.dir, { recursive: true }, (_event, filename) => {
-        if (!filename || !filename.endsWith('.jsonl')) return;
-        const fullPath = this.dir + '/' + filename.replace(/\\/g, '/');
-        this.markDirty(fullPath);
-      });
-    } catch (err) {
-      this.onError?.('watcher', `Failed to start watcher: ${String(err)}`);
+    for (const dir of this.dirs) {
+      try {
+        const w = watch(dir, { recursive: true }, (_event, filename) => {
+          if (!filename || !filename.endsWith('.jsonl')) return;
+          const fullPath = dir + '/' + filename.replace(/\\/g, '/');
+          this.markDirty(fullPath);
+        });
+        this.watchers.push(w);
+      } catch (err) {
+        this.onError?.('watcher', `Failed to start watcher for ${dir}: ${String(err)}`);
+      }
     }
   }
 
   stop(): void {
-    this.watcher?.close();
-    this.watcher = null;
+    for (const w of this.watchers) w.close();
+    this.watchers = [];
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
@@ -90,7 +92,6 @@ export class Watcher {
   private async flush(): Promise<void> {
     const files = [...this.dirtyFiles];
     this.dirtyFiles.clear();
-
     for (const filePath of files) {
       try {
         await this.tailRead(filePath);
@@ -105,7 +106,6 @@ export class Watcher {
     const existing = this.offsets.get(filePath);
 
     if (existing && existing.inode !== s.ino) {
-      // File rotated — full re-read
       this.offsets.delete(filePath);
       this.store.removeFile(filePath);
       await this.coldReadFile(filePath, s);
@@ -113,7 +113,6 @@ export class Watcher {
     }
 
     if (existing && s.size < existing.offset) {
-      // File truncated — full re-read
       this.offsets.delete(filePath);
       this.store.removeFile(filePath);
       await this.coldReadFile(filePath, s);
@@ -145,14 +144,12 @@ export class Watcher {
   private async coldReadFile(filePath: string, s: { ino: number; size: number }): Promise<void> {
     const content = await readFile(filePath, 'utf-8');
     const { events, remainder } = parseBuffer(content);
-
     this.offsets.set(filePath, {
       inode: s.ino,
       size: s.size,
       offset: s.size - remainder.length,
       partialLine: remainder,
     });
-
     this.store.ingest(filePath, events);
   }
 }

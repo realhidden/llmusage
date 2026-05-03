@@ -6,12 +6,15 @@ import type { Config } from '../shared/types.js';
 const configDir = join(homedir(), '.config', 'mystatus');
 const configPath = join(configDir, 'config.json');
 
-const defaultConfig: Config = {};
+const defaultConfig: Config = {
+  dataDirs: [join(homedir(), '.claude', 'projects')],
+};
 
 export async function loadConfig(): Promise<Config> {
   try {
     const raw = await readFile(configPath, 'utf-8');
-    return { ...defaultConfig, ...JSON.parse(raw) };
+    const parsed = JSON.parse(raw);
+    return { ...defaultConfig, ...parsed };
   } catch {
     return { ...defaultConfig };
   }

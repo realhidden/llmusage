@@ -2,18 +2,24 @@ import type { StoreSnapshot } from '../shared/types.js';
 import { renderToday } from './panels/today.js';
 import { renderWeek } from './panels/week.js';
 import { renderSessions } from './panels/sessions.js';
+import { toggleSettings } from './panels/settings.js';
 import { formatCompact, bucketTotal } from './components/token-bar.js';
 
 let lastSnapshot: StoreSnapshot | null = null;
 
-const app = document.getElementById('app')!;
+const appEl = document.getElementById('app')!;
 const headerToday = document.getElementById('header-today') as HTMLElement;
 const headerWaiting = document.getElementById('header-waiting') as HTMLElement;
 const statusDot = document.getElementById('status-dot') as HTMLElement;
 const quitBtn = document.getElementById('header-quit') as HTMLElement;
+const gearBtn = document.getElementById('header-gear') as HTMLElement;
 
 quitBtn?.addEventListener('click', () => {
   (window as any).api.invoke('app:quit');
+});
+
+gearBtn?.addEventListener('click', () => {
+  toggleSettings(appEl);
 });
 
 function updateHeader(snap: StoreSnapshot): void {
