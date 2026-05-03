@@ -28,7 +28,7 @@ app.whenReady().then(async () => {
   await watcher.coldScan();
 
   // Create tray icon (16x16 template image)
-  const iconPath = join(__dirname, '..', '..', '..', '..', 'build', 'icons', 'trayTemplate.png');
+  const iconPath = join(__dirname, '..', '..', '..', 'build', 'icons', 'trayTemplate.png');
   let trayIcon: Electron.NativeImage;
   try {
     trayIcon = nativeImage.createFromPath(iconPath);
@@ -143,9 +143,18 @@ app.on('window-all-closed', () => {
 
 function createDefaultIcon(): Electron.NativeImage {
   const size = 16;
-  const img = nativeImage.createFromBuffer(
-    Buffer.alloc(size * size * 4, 0),
-    { width: size, height: size }
-  );
-  return img;
+  const rgba = Buffer.alloc(size * size * 4, 0);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = x - 7.5, dy = y - 7.5;
+      if (dx * dx + dy * dy <= 36) {
+        const i = (y * size + x) * 4;
+        rgba[i] = 0;
+        rgba[i + 1] = 0;
+        rgba[i + 2] = 0;
+        rgba[i + 3] = 200;
+      }
+    }
+  }
+  return nativeImage.createFromBuffer(rgba, { width: size, height: size });
 }
