@@ -1,0 +1,14 @@
+appId: com.thisisdone.mystatus
+productName: mystatus
+directories:
+  output: release
+files:
+  - dist/**
+  - package.json
+  - build/icons/**
+mac:
+  category: public.app-category.developer-tools
+  target: [dmg, zip]
+  icon: build/icons/icon.icns
+  extendInfo:
+    LSUIElement: 1

@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=360" />
+  <title>mystatus</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <header id="header">
+      <span class="status-dot" id="status-dot"></span>
+      <span class="header-title">Claude</span>
+      <span class="header-today" id="header-today"></span>
+      <span class="header-waiting" id="header-waiting" style="display:none"></span>
+    </header>
+    <main id="panels">
+      <section id="panel-today" class="panel">
+        <div class="panel-label">TODAY <span id="today-date"></span></div>
+        <div id="today-bars"></div>
+        <div id="today-limits"></div>
+        <div id="today-models"></div>
+      </section>
+      <section id="panel-week" class="panel">
+        <div class="panel-label">LAST 7 DAYS</div>
+        <div id="week-chart"></div>
+      </section>
+      <section id="panel-sessions" class="panel">
+        <div class="panel-label" id="sessions-label">SESSIONS</div>
+        <div id="sessions-list"></div>
+      </section>
+    </main>
+  </div>
+  <script type="module" src="main.ts"></script>
+</body>
+</html>
