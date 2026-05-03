@@ -151,7 +151,7 @@ async function fetchAnthropicWith(
         Accept: 'application/json, text/plain, */*',
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
-        'User-Agent': 'mystatus/0.1',
+        'User-Agent': 'llmusage/0.1',
         'anthropic-beta': 'oauth-2025-04-20',
       },
     });
@@ -213,7 +213,7 @@ async function fetchZaiLike(provider: ProviderKind, token: string, baseUrl: stri
         'Accept-Language': 'en-US,en',
         'Content-Type': 'application/json',
         Authorization: token, // z.ai uses raw token, not Bearer
-        'User-Agent': 'mystatus/0.1',
+        'User-Agent': 'llmusage/0.1',
       },
     });
     if (!res.ok) return null;

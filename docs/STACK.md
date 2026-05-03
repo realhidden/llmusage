@@ -94,8 +94,8 @@ No UI framework. No state library. Vanilla TS in renderer.
 ## electron-builder.yml (sketch)
 
 ```yaml
-appId: com.thisisdone.mystatus
-productName: mystatus
+appId: com.thisisdone.llmusage
+productName: llmusage
 directories:
   output: release
 files:

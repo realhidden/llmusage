@@ -2,18 +2,11 @@ import { BrowserWindow, nativeImage } from 'electron';
 
 export type IconState = 'idle' | 'running' | 'waiting';
 
-const SIZE = 22;
+const SIZE = 20;
 const SCALE = 2;       // render at 2x for crispness, then resize
-const ART_SIZE = 20;   // artwork size inside the 22x22 frame; small inset
-                       // keeps the rounded stroke caps off the menu bar edge
+const ART_SIZE = 20;
 
-// Lucide brain-circuit packs all the dense strokes (the brain itself)
-// into the left half of the canvas, with sparse circuit dots trailing
-// off to the right. Centering the geometric viewBox makes the visual
-// mass look offset to the left. Shift the viewBox so the brain's
-// center-of-mass (~x=8) lands closer to the icon center; we lose a
-// tiny bit of the rightmost dot, which is acceptable at 22px.
-const VIEWBOX = '0 2 20 20';
+const VIEWBOX = '2 0 30 28';
 
 // Lucide brain-circuit (ISC / MIT-licensed, same visual style as FA's Pro
 // brain-circuit-light). Rendered through Chromium so we avoid bundling a

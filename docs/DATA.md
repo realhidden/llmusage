@@ -1,6 +1,6 @@
 # DATA
 
-Authoritative reference for the Claude Code on-disk data and how mystatus aggregates it.
+Authoritative reference for the Claude Code on-disk data and how llmusage aggregates it.
 
 ## On-disk layout
 

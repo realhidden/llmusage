@@ -23,9 +23,9 @@ let blinkTimer: ReturnType<typeof setInterval> | null = null;
 let blinkOn = false;
 
 const TOOLTIPS: Record<IconState, string> = {
-  running: 'mystatus — working',
-  waiting: 'mystatus — waiting for input',
-  idle: 'mystatus — idle',
+  running: 'llmusage — working',
+  waiting: 'llmusage — waiting for input',
+  idle: 'llmusage — idle',
 };
 
 function paintTray(state: IconState): void {
@@ -147,14 +147,14 @@ app.whenReady().then(async () => {
     },
     icon: getIcon('idle'),
     showDockIcon: false,
-    tooltip: 'mystatus — idle',
+    tooltip: 'llmusage — idle',
     index: rendererUrl,
   });
 
   mb.on('ready', () => {
     mb?.tray?.on('right-click', () => {
       const contextMenu = Menu.buildFromTemplate([
-        { label: 'Quit mystatus', click: () => app.quit() },
+        { label: 'Quit llmusage', click: () => app.quit() },
       ]);
       mb?.tray?.popUpContextMenu(contextMenu);
     });

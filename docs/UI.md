@@ -52,7 +52,7 @@ LAST 7 DAYS
 
 ```
 ACTIVE
-[●] mystatus  master                  ◉ running
+[●] llmusage  master                  ◉ running
     opus-4-7  · 12 turns · 320k tok
     last: "Plan out everything, write…"
 

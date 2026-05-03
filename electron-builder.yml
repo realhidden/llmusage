@@ -1,5 +1,5 @@
-appId: com.thisisdone.mystatus
-productName: mystatus
+appId: com.thisisdone.llmusage
+productName: llmusage
 directories:
   output: release
 files:

@@ -18,7 +18,7 @@ src/
     tray.ts                   # tray icon + click → toggle window
     window.ts                 # frameless popup, position-under-tray
     ipc.ts                    # channel registration, broadcast helper
-    config.ts                 # load/save ~/.config/mystatus/config.json
+    config.ts                 # load/save ~/.config/llmusage/config.json
     claude/
       paths.ts                # ~/.claude/projects resolution
       parser.ts               # jsonl streaming parse + type guards
@@ -122,7 +122,7 @@ type StoreSnapshot = {
 
 ## Persistence
 
-v1 keeps state in memory only. Cold start re-reads everything. If startup time becomes a problem, add `~/.cache/mystatus/store.json` checkpoint with `{ files: { path: { inode, offset, mtime } }, aggregations: {...} }` and validate on boot.
+v1 keeps state in memory only. Cold start re-reads everything. If startup time becomes a problem, add `~/.cache/llmusage/store.json` checkpoint with `{ files: { path: { inode, offset, mtime } }, aggregations: {...} }` and validate on boot.
 
 ## Threading / perf budget
 

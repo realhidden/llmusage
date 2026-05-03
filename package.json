@@ -1,5 +1,5 @@
 {
-  "name": "mystatus",
+  "name": "llmusage",
   "version": "0.1.0",
   "description": "macOS menu bar app for Claude Code usage tracking",
   "type": "module",

@@ -1,4 +1,4 @@
-# mystatus
+# llmusage
 
 macOS menu bar app that surfaces Claude Code usage and live session state.
 

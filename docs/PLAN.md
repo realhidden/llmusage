@@ -67,7 +67,7 @@ A macOS menu bar (status item) app showing Claude Code usage. Click the tray ico
 
 ### Phase 4 — limits + config
 
-1. `~/.config/mystatus/config.json`:
+1. `~/.config/llmusage/config.json`:
    ```json
    {
      "plan": "max",

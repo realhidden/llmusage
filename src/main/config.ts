@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import type { Config } from '../shared/types.js';
 
-const configDir = join(homedir(), '.config', 'mystatus');
+const configDir = join(homedir(), '.config', 'llmusage');
 const configPath = join(configDir, 'config.json');
 
 const defaultConfig: Config = {
