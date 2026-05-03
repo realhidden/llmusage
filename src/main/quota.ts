@@ -279,6 +279,8 @@ export async function getQuotaFor(p: ProviderConfig): Promise<Quota | null> {
 }
 
 export async function getQuotaForDir(dir: string): Promise<Quota | null> {
+  // Codex has its own rate-limit reporting in session events, not via API
+  if (dir.includes('.codex/sessions') || dir.includes('.codex\\sessions')) return null;
   const provider = await detectProvider(dir);
   return getQuotaFor(provider);
 }

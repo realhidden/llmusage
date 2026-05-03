@@ -7,7 +7,10 @@ const configDir = join(homedir(), '.config', 'mystatus');
 const configPath = join(configDir, 'config.json');
 
 const defaultConfig: Config = {
-  dataDirs: [join(homedir(), '.claude', 'projects')],
+  dataDirs: [
+    join(homedir(), '.claude', 'projects'),
+    join(homedir(), '.codex', 'sessions'),
+  ],
 };
 
 export async function loadConfig(): Promise<Config> {

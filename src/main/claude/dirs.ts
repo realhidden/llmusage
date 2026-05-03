@@ -12,6 +12,8 @@ export type NormalizedDir = {
 function defaultLabel(path: string): string {
   // ~/.claude/projects -> claude
   // ~/.glm/projects   -> glm
+  // ~/.codex/sessions -> codex
+  if (path.includes('.codex/sessions') || path.includes('.codex\\sessions')) return 'codex';
   const parent = basename(dirname(path));
   if (parent && parent.startsWith('.')) return parent.slice(1);
   if (parent) return parent;
@@ -31,6 +33,9 @@ export function normalizeDir(entry: DataDirEntry): NormalizedDir {
 }
 
 export function dirsFromConfig(config: Config): NormalizedDir[] {
-  const entries = config.dataDirs ?? [`${homedir()}/.claude/projects`];
+  const entries = config.dataDirs ?? [
+    `${homedir()}/.claude/projects`,
+    `${homedir()}/.codex/sessions`,
+  ];
   return entries.map(normalizeDir);
 }
