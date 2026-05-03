@@ -9,8 +9,9 @@ function electronFileProtocol() {
     closeBundle() {
       const htmlPath = resolve(__dirname, 'dist/renderer/index.html');
       let html = readFileSync(htmlPath, 'utf-8');
-      // Remove type="module" and crossorigin — they break file:// loading in Electron
-      html = html.replace(/ type="module"/g, '');
+      // Replace type="module" with defer — module breaks file:// in Electron,
+      // but defer is needed so the script waits for DOM before executing
+      html = html.replace(/ type="module"/g, ' defer');
       html = html.replace(/ crossorigin/g, '');
       writeFileSync(htmlPath, html);
     },
