@@ -8,6 +8,7 @@ import { Watcher } from './claude/watcher.js';
 import { dirsFromConfig } from './claude/dirs.js';
 import { loadConfig, saveConfig } from './config.js';
 import { registerIPC, broadcast } from './ipc.js';
+import { getIcon, type IconState } from './tray-icon.js';
 import type { StoreSnapshot, Config, DirLimits } from '../shared/types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -16,47 +17,22 @@ const isDev = process.env.NODE_ENV === 'development';
 let store: Store;
 let watcher: Watcher;
 let mb: ReturnType<typeof menubar> | null = null;
-let lastIconState = '';
+let lastIconState: IconState = 'idle';
+let blinkTimer: ReturnType<typeof setInterval> | null = null;
+let blinkOn = false;
 
-type IconState = 'idle' | 'running' | 'waiting';
+const TOOLTIPS: Record<IconState, string> = {
+  running: 'mystatus — working',
+  waiting: 'mystatus — waiting for input',
+  idle: 'mystatus — idle',
+};
 
-function makeIcon(state: IconState): Electron.NativeImage {
-  const size = 22;
-  const rgba = Buffer.alloc(size * size * 4, 0);
-  const cx = size / 2, cy = size / 2;
-
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const dx = (x - cx) / (size / 2);
-      const dy = (y - cy) / (size / 2);
-      const r = Math.sqrt(dx * dx * 1.1 + dy * dy * 1.3);
-
-      if (r >= 0.88) continue;
-      const edge = Math.min(1, (0.88 - r) * size / 2.5);
-
-      let alpha = Math.floor(edge * 220);
-      let red = 0, green = 0, blue = 0;
-
-      if (state === 'running') {
-        // Green brain
-        red = 0x34; green = 0xc7; blue = 0x59;
-        alpha = Math.floor(edge * 230);
-      } else if (state === 'waiting') {
-        // Amber brain
-        red = 0xff; green = 0x9f; blue = 0x0a;
-        alpha = Math.floor(edge * 220);
-      }
-      // idle: plain black (template-compatible)
-
-      const i = (y * size + x) * 4;
-      rgba[i] = red;
-      rgba[i + 1] = green;
-      rgba[i + 2] = blue;
-      rgba[i + 3] = alpha;
-    }
-  }
-
-  return nativeImage.createFromBuffer(rgba, { width: size, height: size });
+function paintTray(state: IconState): void {
+  const tray = mb?.tray;
+  if (!tray) return;
+  // Waiting blinks between full-bright and dim
+  const dim = state === 'waiting' && blinkOn ? 0.4 : 1;
+  tray.setImage(getIcon(state, dim));
 }
 
 function updateTrayIcon(snap: StoreSnapshot): void {
@@ -66,19 +42,30 @@ function updateTrayIcon(snap: StoreSnapshot): void {
   const hasRunning = snap.sessions.active.some(s => s.state === 'running');
   const hasWaiting = snap.sessions.active.some(s => s.state === 'waiting-for-input');
   let state: IconState = 'idle';
-  if (hasRunning) state = 'running';
-  else if (hasWaiting) state = 'waiting';
+  if (hasWaiting) state = 'waiting';
+  else if (hasRunning) state = 'running';
 
-  if (state === lastIconState) return;
-  lastIconState = state;
-  tray.setImage(makeIcon(state));
+  if (state !== lastIconState) {
+    lastIconState = state;
+    tray.setToolTip(TOOLTIPS[state]);
+  }
 
-  const labels: Record<IconState, string> = {
-    running: 'mystatus — working',
-    waiting: 'mystatus — waiting for input',
-    idle: 'mystatus — idle',
-  };
-  tray.setToolTip(labels[state]);
+  // Blink only while waiting; cancel otherwise
+  if (state === 'waiting') {
+    if (!blinkTimer) {
+      blinkOn = false;
+      blinkTimer = setInterval(() => {
+        blinkOn = !blinkOn;
+        paintTray('waiting');
+      }, 600);
+    }
+  } else if (blinkTimer) {
+    clearInterval(blinkTimer);
+    blinkTimer = null;
+    blinkOn = false;
+  }
+
+  paintTray(state);
 }
 
 const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
@@ -142,7 +129,7 @@ app.whenReady().then(async () => {
         nodeIntegration: false,
       },
     },
-    icon: makeIcon('idle'),
+    icon: getIcon('idle'),
     showDockIcon: false,
     tooltip: 'mystatus — idle',
     index: rendererUrl,
