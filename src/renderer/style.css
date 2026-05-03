@@ -99,6 +99,21 @@ body {
   cursor: pointer;
 }
 
+.header-quit {
+  background: none;
+  border: none;
+  color: var(--fg-dim);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+  margin-left: 4px;
+}
+
+.header-quit:hover {
+  color: var(--red);
+}
+
 /* Panels */
 .panel {
   padding: 12px;
