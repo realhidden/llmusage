@@ -62,10 +62,18 @@ export function renderSessions(container: HTMLElement, snapshot: StoreSnapshot):
 function renderSessionRow(s: SessionState): string {
   const name = s.cwd.split('/').pop() ?? s.cwd;
   const total = bucketTotal(s.tokens);
-  const models = s.models.map(m => modelShort(m)).join(', ');
   const stateLabel = s.state === 'waiting-for-input' ? 'waiting' : s.state;
 
   const isExpanded = expandedSessionId === s.sessionId;
+
+  // Sort models by token usage desc so the dominant one shows first
+  const modelEntries = Object.entries(s.byModel)
+    .sort((a, b) => bucketTotal(b[1]) - bucketTotal(a[1]));
+  const modelChips = modelEntries.length > 0
+    ? modelEntries.map(([m]) =>
+        `<span class="session-model"><span class="model-dot" style="background:${modelColor(m)}"></span>${escapeHtml(modelShort(m))}</span>`
+      ).join('')
+    : (s.models.length > 0 ? `<span class="session-model">${escapeHtml(s.models.map(m => modelShort(m)).join(', '))}</span>` : '');
 
   let html = `<div class="session-row" data-session-id="${s.sessionId}">
     <div class="session-header">
@@ -74,7 +82,7 @@ function renderSessionRow(s: SessionState): string {
       <span class="session-branch">${escapeHtml(s.gitBranch || '—')}</span>
       <span class="session-badge ${s.state}">${stateLabel}</span>
     </div>
-    <div class="session-meta">${models} · ${s.assistantTurns} turns · ${formatCompact(total)} tok</div>`;
+    <div class="session-meta">${modelChips}<span class="session-meta-stat">${s.assistantTurns} turns · ${formatCompact(total)} tok</span></div>`;
 
   if (s.lastPrompt) {
     const truncated = s.lastPrompt.length > 60 ? s.lastPrompt.slice(0, 60) + '…' : s.lastPrompt;
