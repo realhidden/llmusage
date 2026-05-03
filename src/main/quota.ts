@@ -1,5 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { readFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 
 const execFileP = promisify(execFile);
 
@@ -10,30 +12,79 @@ export type QuotaWindow = {
 
 export type Quota = {
   fetchedAt: string;
-  subscription: string | null;   // "pro" | "max" | etc, from keychain
+  provider: ProviderKind;
+  subscription: string | null;   // "pro" | "max" | etc, or "z.ai" / "zhipu" branding
   fiveHour: QuotaWindow | null;
   sevenDay: QuotaWindow | null;
   sevenDayOpus: QuotaWindow | null;
 };
 
-type RawWindow = { utilization?: number; resets_at?: string | null } | null | undefined;
-type RawResponse = {
-  five_hour?: RawWindow;
-  seven_day?: RawWindow;
-  seven_day_opus?: RawWindow;
+export type ProviderKind = 'anthropic' | 'z.ai' | 'zhipu' | 'unknown';
+
+type ProviderConfig = {
+  kind: ProviderKind;
+  baseUrl?: string;
+  token?: string;
 };
 
 const KEYCHAIN_SERVICE = 'Claude Code-credentials';
-const ENDPOINT = 'https://api.anthropic.com/api/oauth/usage';
+const ANTHROPIC_ENDPOINT = 'https://api.anthropic.com/api/oauth/usage';
 const TTL_MS = 60_000;
 
-let cache: { at: number; value: Quota | null } | null = null;
-let inflight: Promise<Quota | null> | null = null;
+type CacheEntry = { at: number; value: Quota | null };
+const cache = new Map<string, CacheEntry>();
+const inflight = new Map<string, Promise<Quota | null>>();
 
-type Credentials = {
-  accessToken: string;
-  subscriptionType: string | null;
+function cacheKey(p: ProviderConfig): string {
+  return `${p.kind}:${p.baseUrl ?? ''}:${(p.token ?? '').slice(0, 8)}`;
+}
+
+// ---- Provider detection ---------------------------------------------------
+
+type ParentSettings = {
+  env?: Record<string, string>;
 };
+
+function classifyBaseUrl(url: string | undefined | null): ProviderKind {
+  if (!url) return 'anthropic';
+  if (url.includes('api.z.ai')) return 'z.ai';
+  if (url.includes('bigmodel.cn')) return 'zhipu';
+  if (url.includes('api.anthropic.com')) return 'anthropic';
+  return 'unknown';
+}
+
+async function readParentSettings(dir: string): Promise<ParentSettings | null> {
+  // Convention: data dir is e.g. <root>/projects, with settings.json one level up
+  const parent = dirname(dir);
+  const settingsPath = join(parent, 'settings.json');
+  try {
+    const raw = await readFile(settingsPath, 'utf-8');
+    return JSON.parse(raw) as ParentSettings;
+  } catch {
+    return null;
+  }
+}
+
+export async function detectProvider(dir: string): Promise<ProviderConfig> {
+  const settings = await readParentSettings(dir);
+  const env = settings?.env ?? {};
+  const baseUrl = env.ANTHROPIC_BASE_URL;
+  const tokenEnv = env.ANTHROPIC_AUTH_TOKEN;
+
+  if (baseUrl) {
+    return {
+      kind: classifyBaseUrl(baseUrl),
+      baseUrl,
+      token: tokenEnv,
+    };
+  }
+  // No env override → default to real Claude (keychain auth)
+  return { kind: 'anthropic' };
+}
+
+// ---- Anthropic (real Claude) ----------------------------------------------
+
+type Credentials = { accessToken: string; subscriptionType: string | null };
 
 async function readKeychain(): Promise<Credentials | null> {
   if (process.platform !== 'darwin') return null;
@@ -60,37 +111,59 @@ async function readKeychain(): Promise<Credentials | null> {
   }
 }
 
-function normalizeWindow(w: RawWindow): QuotaWindow | null {
+type RawWindow = { utilization?: number; resets_at?: string | null } | null | undefined;
+type RawAnthropicResponse = {
+  five_hour?: RawWindow;
+  seven_day?: RawWindow;
+  seven_day_opus?: RawWindow;
+};
+
+function normalizeAnthropicWindow(w: RawWindow): QuotaWindow | null {
   if (!w || typeof w.utilization !== 'number') return null;
   return { utilization: w.utilization, resetsAt: w.resets_at ?? null };
 }
 
-async function fetchQuota(): Promise<Quota | null> {
+async function fetchAnthropic(): Promise<Quota | null> {
   const creds = await readKeychain();
   if (!creds) return null;
+  return fetchAnthropicWith(creds.accessToken, creds.subscriptionType, ANTHROPIC_ENDPOINT);
+}
 
+async function fetchAnthropicCustom(token: string, baseUrl: string): Promise<Quota | null> {
+  // Same OAuth-style endpoint shape, but on a custom base (rarely useful)
+  const origin = new URL(baseUrl).origin;
+  const endpoint = `${origin}/api/oauth/usage`;
+  return fetchAnthropicWith(token, null, endpoint);
+}
+
+async function fetchAnthropicWith(
+  token: string,
+  subscription: string | null,
+  endpoint: string
+): Promise<Quota | null> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 4000);
   try {
-    const res = await fetch(ENDPOINT, {
+    const res = await fetch(endpoint, {
       method: 'GET',
       signal: controller.signal,
       headers: {
         Accept: 'application/json, text/plain, */*',
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${creds.accessToken}`,
+        Authorization: `Bearer ${token}`,
         'User-Agent': 'mystatus/0.1',
         'anthropic-beta': 'oauth-2025-04-20',
       },
     });
     if (!res.ok) return null;
-    const data = (await res.json()) as RawResponse;
+    const data = (await res.json()) as RawAnthropicResponse;
     return {
       fetchedAt: new Date().toISOString(),
-      subscription: creds.subscriptionType,
-      fiveHour: normalizeWindow(data.five_hour),
-      sevenDay: normalizeWindow(data.seven_day),
-      sevenDayOpus: normalizeWindow(data.seven_day_opus),
+      provider: 'anthropic',
+      subscription,
+      fiveHour: normalizeAnthropicWindow(data.five_hour),
+      sevenDay: normalizeAnthropicWindow(data.seven_day),
+      sevenDayOpus: normalizeAnthropicWindow(data.seven_day_opus),
     };
   } catch {
     return null;
@@ -99,19 +172,117 @@ async function fetchQuota(): Promise<Quota | null> {
   }
 }
 
-export async function getQuota(): Promise<Quota | null> {
+// ---- Z.ai / Zhipu ---------------------------------------------------------
+
+type RawZaiLimit = {
+  type?: string;
+  percentage?: number;
+  reset_at?: string;
+  resetTime?: string;
+  resetAt?: string;
+};
+type RawZaiResponse = {
+  data?: { limits?: RawZaiLimit[] };
+  limits?: RawZaiLimit[];
+};
+
+function pickResetField(l: RawZaiLimit): string | null {
+  return l.reset_at ?? l.resetAt ?? l.resetTime ?? null;
+}
+
+function classifyLimitWindow(type: string | undefined): 'fiveHour' | 'sevenDay' | 'opus' | null {
+  if (!type) return null;
+  const t = type.toLowerCase();
+  if (t.includes('5 hour') || t === 'tokens_limit' || t.includes('5h')) return 'fiveHour';
+  if (t.includes('7 day') || t.includes('weekly') || t.includes('week') || t.includes('7d')) return 'sevenDay';
+  if (t.includes('opus')) return 'opus';
+  return null;
+}
+
+async function fetchZaiLike(provider: ProviderKind, token: string, baseUrl: string): Promise<Quota | null> {
+  const origin = new URL(baseUrl).origin;
+  const endpoint = `${origin}/api/monitor/usage/quota/limit`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 4000);
+  try {
+    const res = await fetch(endpoint, {
+      method: 'GET',
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/json, text/plain, */*',
+        'Accept-Language': 'en-US,en',
+        'Content-Type': 'application/json',
+        Authorization: token, // z.ai uses raw token, not Bearer
+        'User-Agent': 'mystatus/0.1',
+      },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as RawZaiResponse;
+    const limits = data.data?.limits ?? data.limits ?? [];
+    let fiveHour: QuotaWindow | null = null;
+    let sevenDay: QuotaWindow | null = null;
+    let opus: QuotaWindow | null = null;
+    for (const l of limits) {
+      const slot = classifyLimitWindow(l.type);
+      if (!slot) continue;
+      const pct = typeof l.percentage === 'number' ? l.percentage : null;
+      if (pct == null) continue;
+      const win: QuotaWindow = { utilization: pct, resetsAt: pickResetField(l) };
+      if (slot === 'fiveHour' && !fiveHour) fiveHour = win;
+      else if (slot === 'sevenDay' && !sevenDay) sevenDay = win;
+      else if (slot === 'opus' && !opus) opus = win;
+    }
+    if (!fiveHour && !sevenDay && !opus) return null;
+    return {
+      fetchedAt: new Date().toISOString(),
+      provider,
+      subscription: provider === 'z.ai' ? 'Z.AI' : provider === 'zhipu' ? 'Zhipu' : null,
+      fiveHour,
+      sevenDay,
+      sevenDayOpus: opus,
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// ---- Public entry points --------------------------------------------------
+
+async function fetchForConfig(p: ProviderConfig): Promise<Quota | null> {
+  if (p.kind === 'anthropic') {
+    if (p.token && p.baseUrl) return fetchAnthropicCustom(p.token, p.baseUrl);
+    return fetchAnthropic();
+  }
+  if ((p.kind === 'z.ai' || p.kind === 'zhipu') && p.token && p.baseUrl) {
+    return fetchZaiLike(p.kind, p.token, p.baseUrl);
+  }
+  return null;
+}
+
+export async function getQuotaFor(p: ProviderConfig): Promise<Quota | null> {
+  const key = cacheKey(p);
   const now = Date.now();
-  if (cache && now - cache.at < TTL_MS) return cache.value;
-  if (inflight) return inflight;
-  inflight = (async () => {
-    const value = await fetchQuota();
-    cache = { at: Date.now(), value };
-    inflight = null;
+  const cached = cache.get(key);
+  if (cached && now - cached.at < TTL_MS) return cached.value;
+  const existing = inflight.get(key);
+  if (existing) return existing;
+  const promise = (async () => {
+    const value = await fetchForConfig(p);
+    cache.set(key, { at: Date.now(), value });
+    inflight.delete(key);
     return value;
   })();
-  return inflight;
+  inflight.set(key, promise);
+  return promise;
+}
+
+export async function getQuotaForDir(dir: string): Promise<Quota | null> {
+  const provider = await detectProvider(dir);
+  return getQuotaFor(provider);
 }
 
 export function clearQuotaCache(): void {
-  cache = null;
+  cache.clear();
 }

@@ -45,10 +45,17 @@ export type QuotaWindow = {
 
 export type PlanQuota = {
   fetchedAt: string;
+  provider: 'anthropic' | 'z.ai' | 'zhipu' | 'unknown';
   subscription: string | null;
   fiveHour: QuotaWindow | null;
   sevenDay: QuotaWindow | null;
   sevenDayOpus: QuotaWindow | null;
+};
+
+export type DirPlan = {
+  dir: string;
+  label: string;
+  plan: PlanQuota | null;
 };
 
 export type StoreSnapshot = {
@@ -65,7 +72,7 @@ export type StoreSnapshot = {
     fiveHourUsed: number;
     weeklyUsed: number;
     byDir: DirLimits[];
-    plan?: PlanQuota | null;
+    plans: DirPlan[];
   };
 };
 

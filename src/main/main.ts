@@ -9,8 +9,8 @@ import { dirsFromConfig } from './claude/dirs.js';
 import { loadConfig, saveConfig } from './config.js';
 import { registerIPC, broadcast } from './ipc.js';
 import { getIcon, initIcons, type IconState } from './tray-icon.js';
-import { getQuota } from './quota.js';
-import type { StoreSnapshot, Config, DirLimits } from '../shared/types.js';
+import { getQuotaForDir } from './quota.js';
+import type { StoreSnapshot, Config, DirLimits, DirPlan } from '../shared/types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isDev = process.env.NODE_ENV === 'development';
@@ -87,7 +87,17 @@ async function decorateSnapshot(snap: StoreSnapshot, config: Config): Promise<St
     weeklyUsed: store.rollingByDir(d.path, WEEK_MS),
   }));
   snap.limits.byDir = byDir;
-  snap.limits.plan = await getQuota();
+
+  // Fan out per-dir quota fetches in parallel; quota module handles
+  // per-provider routing and 60s caching.
+  const plans: DirPlan[] = await Promise.all(
+    dirs.map(async d => ({
+      dir: d.path,
+      label: d.label,
+      plan: await getQuotaForDir(d.path),
+    }))
+  );
+  snap.limits.plans = plans.filter(p => p.plan != null);
   return snap;
 }
 
