@@ -1,4 +1,4 @@
-import type { StoreSnapshot, DirLimits, QuotaWindow, PlanQuota } from '../../shared/types.js';
+import type { StoreSnapshot, DirLimits, QuotaWindow, PlanQuota, DirPlan } from '../../shared/types.js';
 import { formatCompact, bucketTotal, limitColor, modelColor, modelShort } from '../components/token-bar.js';
 
 let detailExpanded = false;
@@ -55,7 +55,7 @@ export function renderToday(container: HTMLElement, snapshot: StoreSnapshot): vo
 
   const limitsEl = container.querySelector('#today-limits') as HTMLElement;
   if (limitsEl) {
-    limitsEl.innerHTML = renderPlanSection(snapshot.limits.plan ?? null);
+    limitsEl.innerHTML = renderAllPlans(snapshot.limits.plans ?? []);
   }
 
   const modelsEl = container.querySelector('#today-models') as HTMLElement;
@@ -71,15 +71,28 @@ export function renderToday(container: HTMLElement, snapshot: StoreSnapshot): vo
   }
 }
 
-function renderPlanSection(plan: PlanQuota | null): string {
-  if (!plan || (!plan.fiveHour && !plan.sevenDay)) {
-    // No quota available (no keychain / off macOS / fetch failed). Hide entirely.
-    return '';
-  }
-  const heading = plan.subscription
-    ? `Claude ${capitalize(plan.subscription)}`
-    : 'Claude';
+function renderAllPlans(plans: DirPlan[]): string {
+  const sections = plans
+    .filter(p => p.plan && (p.plan.fiveHour || p.plan.sevenDay || p.plan.sevenDayOpus))
+    .map(p => renderPlanSection(p.plan!, p.label));
+  return sections.join('');
+}
 
+function planHeading(plan: PlanQuota, dirLabel: string): string {
+  switch (plan.provider) {
+    case 'anthropic':
+      return plan.subscription ? `Claude ${capitalize(plan.subscription)}` : 'Claude';
+    case 'z.ai':
+      return 'Z.AI';
+    case 'zhipu':
+      return 'Zhipu';
+    default:
+      return dirLabel;
+  }
+}
+
+function renderPlanSection(plan: PlanQuota, dirLabel: string): string {
+  const heading = planHeading(plan, dirLabel);
   const rows: string[] = [];
   if (plan.fiveHour) rows.push(planRow('5h', plan.fiveHour));
   if (plan.sevenDay) rows.push(planRow('7d', plan.sevenDay));
@@ -95,13 +108,14 @@ function renderPlanSection(plan: PlanQuota | null): string {
 
 function planRow(label: string, w: QuotaWindow): string {
   const pct = Math.max(0, Math.min(w.utilization, 100));
-  const reset = w.resetsAt ? `resets ${formatReset(w.resetsAt)}` : '';
+  const clock = w.resetsAt ? formatResetClock(w.resetsAt) : '';
+  const tooltip = w.resetsAt ? `resets ${formatResetFull(w.resetsAt)}` : '';
   return `
     <div class="limit-row">
       <span class="limit-label">${label}</span>
       <div class="limit-track"><div class="limit-fill ${limitColor(pct)}" style="width:${pct}%"></div></div>
       <span class="limit-pct">${pct.toFixed(0)}%</span>
-      <span class="limit-reset" title="${escapeHtml(w.resetsAt ?? '')}">${reset}</span>
+      <span class="limit-reset" title="${escapeHtml(tooltip)}">${clock}</span>
     </div>`;
 }
 
@@ -151,20 +165,27 @@ function rollingRow(label: string, used: number, cap?: number): string {
     </div>`;
 }
 
-function formatReset(iso: string): string {
+function formatResetClock(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
-  const ms = d.getTime() - Date.now();
-  if (ms <= 0) return 'now';
-  const mins = Math.floor(ms / 60000);
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) {
-    const r = mins % 60;
-    return r ? `${hours}h ${r}m` : `${hours}h`;
-  }
-  const days = Math.floor(hours / 24);
-  return `${days}d`;
+  return new Intl.DateTimeFormat(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(d);
+}
+
+function formatResetFull(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(d);
 }
 
 function capitalize(s: string): string {
