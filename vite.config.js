@@ -21,6 +21,10 @@ function electronFileProtocol() {
 export default defineConfig({
   root: 'src/renderer',
   base: './',
+  test: {
+    root: '.',
+    include: ['src/**/*.test.ts'],
+  },
   plugins: [electronFileProtocol()],
   build: {
     outDir: '../../dist/renderer',

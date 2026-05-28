@@ -1,4 +1,4 @@
-import type { StoreSnapshot } from '../shared/types.js';
+import type { Config, StoreSnapshot } from '../shared/types.js';
 import { renderToday } from './panels/today.js';
 import { renderWeek } from './panels/week.js';
 import { renderSessions } from './panels/sessions.js';
@@ -15,13 +15,22 @@ const quitBtn = document.getElementById('header-quit') as HTMLElement;
 const gearBtn = document.getElementById('header-gear') as HTMLElement;
 const refreshBtn = document.getElementById('header-refresh') as HTMLElement;
 
+function applyTheme(theme: Config['theme'] = 'system'): void {
+  document.body.dataset.theme = theme;
+}
+
+window.api.invoke('config:get').then((config) => {
+  window.__llmusageConfig = config;
+  applyTheme(config.theme ?? 'system');
+});
+
 quitBtn?.addEventListener('click', () => {
-  (window as any).api.invoke('app:quit');
+  window.api.invoke('app:quit');
 });
 
 refreshBtn?.addEventListener('click', () => {
   refreshBtn.classList.add('spinning');
-  (window as any).api.invoke('store:snapshot').then((snap: StoreSnapshot) => {
+  window.api.invoke('store:snapshot').then((snap: StoreSnapshot) => {
     lastSnapshot = snap;
     render(snap);
     setTimeout(() => refreshBtn.classList.remove('spinning'), 200);
@@ -65,13 +74,13 @@ function render(snap: StoreSnapshot): void {
 }
 
 // Subscribe to store updates
-const unsub = (window as any).api.subscribe('store:update', (snap: StoreSnapshot) => {
+const unsub = window.api.subscribe('store:update', (snap: StoreSnapshot) => {
   lastSnapshot = snap;
   render(snap);
 });
 
 // Request initial snapshot
-(window as any).api.invoke('store:snapshot').then((snap: StoreSnapshot) => {
+window.api.invoke('store:snapshot').then((snap: StoreSnapshot) => {
   lastSnapshot = snap;
   render(snap);
 }).catch((err: Error) => {

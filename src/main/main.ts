@@ -1,13 +1,12 @@
-import { app, BrowserWindow, ipcMain, nativeImage, shell, Tray, Menu } from 'electron';
+import { app, ipcMain, shell, Menu } from 'electron';
 import { menubar } from 'menubar';
 import { join, dirname } from 'node:path';
-import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { Store } from './claude/store.js';
 import { Watcher } from './claude/watcher.js';
 import { dirsFromConfig } from './claude/dirs.js';
 import { loadConfig, saveConfig } from './config.js';
-import { registerIPC, broadcast } from './ipc.js';
+import { registerIPC } from './ipc.js';
 import { getIcon, initIcons, type IconState } from './tray-icon.js';
 import { getQuotaForDir } from './quota.js';
 import type { StoreSnapshot, Config, DirLimits, DirPlan } from '../shared/types.js';
@@ -21,6 +20,7 @@ let mb: ReturnType<typeof menubar> | null = null;
 let lastIconState: IconState = 'idle';
 let blinkTimer: ReturnType<typeof setInterval> | null = null;
 let blinkOn = false;
+let broadcastTimer: ReturnType<typeof setTimeout> | null = null;
 
 const TOOLTIPS: Record<IconState, string> = {
   running: 'llmusage — working',
@@ -101,6 +101,39 @@ async function decorateSnapshot(snap: StoreSnapshot, config: Config): Promise<St
   return snap;
 }
 
+function createWatcher(config: Config): Watcher {
+  const normalizedDirs = dirsFromConfig(config);
+  return new Watcher(store, {
+    dirs: normalizedDirs.map(d => d.path),
+    onError: (scope, message) => {
+      console.error(`[${scope}] ${message}`);
+    },
+  });
+}
+
+async function currentSnapshot(): Promise<StoreSnapshot> {
+  const config = await loadConfig();
+  return decorateSnapshot(store.snapshot(), config);
+}
+
+async function sendSnapshot(): Promise<void> {
+  const snap = await currentSnapshot();
+  const win = mb?.window;
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('store:update', snap);
+  }
+  updateTrayIcon(snap);
+}
+
+async function reloadData(config: Config): Promise<void> {
+  watcher?.stop();
+  store.reset();
+  watcher = createWatcher(config);
+  await watcher.coldScan();
+  watcher.start();
+  await sendSnapshot();
+}
+
 app.whenReady().then(async () => {
   app.dock?.hide();
 
@@ -111,15 +144,7 @@ app.whenReady().then(async () => {
   store = new Store();
 
   const initConfig = await loadConfig();
-  const normalizedDirs = dirsFromConfig(initConfig);
-  const dirs = normalizedDirs.map(d => d.path);
-
-  watcher = new Watcher(store, {
-    dirs,
-    onError: (scope, message) => {
-      console.error(`[${scope}] ${message}`);
-    },
-  });
+  watcher = createWatcher(initConfig);
 
   await watcher.coldScan();
 
@@ -169,26 +194,18 @@ app.whenReady().then(async () => {
     }
 
     win.webContents.on('did-finish-load', async () => {
-      const config = await loadConfig();
-      const snap = await decorateSnapshot(store.snapshot(), config);
+      const snap = await currentSnapshot();
       win.webContents.send('store:update', snap);
       updateTrayIcon(snap);
     });
   });
 
   // Store change -> broadcast + update icon
-  let broadcastTimer: ReturnType<typeof setTimeout> | null = null;
   store.onChange(() => {
     if (broadcastTimer) return;
     broadcastTimer = setTimeout(async () => {
       broadcastTimer = null;
-      const config = await loadConfig();
-      const snap = await decorateSnapshot(store.snapshot(), config);
-      const win = mb?.window;
-      if (win && !win.isDestroyed()) {
-        win.webContents.send('store:update', snap);
-      }
-      updateTrayIcon(snap);
+      await sendSnapshot();
     }, 200);
   });
 
@@ -199,12 +216,19 @@ app.whenReady().then(async () => {
   watcher.start();
 
   registerIPC(ipcMain, {
-    'store:snapshot': async () => {
-      const config = await loadConfig();
-      return decorateSnapshot(store.snapshot(), config);
-    },
+    'store:snapshot': async () => currentSnapshot(),
     'config:get': async () => loadConfig(),
-    'config:set': async (_event, args) => saveConfig(args as Partial<import('../shared/types.js').Config>),
+    'config:set': async (_event, args) => {
+      const partial = args as Partial<Config>;
+      const config = await saveConfig(partial);
+      if (Object.prototype.hasOwnProperty.call(partial, 'dataDirs')) {
+        await reloadData(config);
+      } else {
+        await sendSnapshot();
+      }
+      app.setLoginItemSettings({ openAtLogin: config.autoLaunch === true });
+      return config;
+    },
     'app:openProject': async (_event, args) => {
       const { cwd } = args as { cwd: string };
       shell.showItemInFolder(cwd);

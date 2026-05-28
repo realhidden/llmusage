@@ -1,4 +1,4 @@
-import type { Config } from '../../shared/types.js';
+import type { Config, DataDirEntry } from '../../shared/types.js';
 
 let visible = false;
 
@@ -24,8 +24,18 @@ export function renderSettings(container: HTMLElement, config: Config): void {
         <div class="settings-section-label">Data Directories</div>
         <div id="dir-list"></div>
         <div class="settings-add-dir">
+          <input type="text" id="dir-label-input" placeholder="label" />
           <input type="text" id="dir-input" placeholder="/path/to/projects" />
           <button id="dir-add-btn">Add</button>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-label">Theme</div>
+        <div class="settings-segmented" id="theme-segmented">
+          <button data-theme="system">System</button>
+          <button data-theme="dark">Dark</button>
+          <button data-theme="light">Light</button>
         </div>
       </div>
 
@@ -42,13 +52,28 @@ export function renderSettings(container: HTMLElement, config: Config): void {
   const dirs = config.dataDirs ?? [];
   dirList.innerHTML = dirs.map((dir, i) => {
     const path = typeof dir === 'string' ? dir : dir.path;
+    const label = typeof dir === 'string' ? defaultLabel(path) : (dir.label ?? defaultLabel(path));
     return `
     <div class="settings-dir-row">
+      <span class="settings-dir-label">${escapeHtml(label)}</span>
       <span class="settings-dir-path">${escapeHtml(path)}</span>
       <button class="settings-dir-remove" data-index="${i}">&times;</button>
     </div>
   `;
   }).join('');
+
+  const theme = config.theme ?? 'system';
+  panel.querySelectorAll('#theme-segmented button').forEach(btn => {
+    const button = btn as HTMLButtonElement;
+    button.classList.toggle('active', button.dataset.theme === theme);
+    button.addEventListener('click', async () => {
+      const nextTheme = button.dataset.theme as Config['theme'];
+      const freshConfig = await window.api.invoke('config:set', { theme: nextTheme });
+      document.body.dataset.theme = freshConfig.theme ?? 'system';
+      window.__llmusageConfig = freshConfig;
+      renderSettings(container, freshConfig);
+    });
+  });
 
   // Bind close
   panel.querySelector('#settings-close')!.addEventListener('click', () => {
@@ -61,13 +86,17 @@ export function renderSettings(container: HTMLElement, config: Config): void {
   // Bind add dir
   panel.querySelector('#dir-add-btn')!.addEventListener('click', async () => {
     const input = panel.querySelector('#dir-input') as HTMLInputElement;
+    const labelInput = panel.querySelector('#dir-label-input') as HTMLInputElement;
     const val = input.value.trim();
     if (!val) return;
-    const current = await (window as any).api.invoke('config:get') as Config;
-    const dirs = [...(current.dataDirs ?? []), val];
-    await (window as any).api.invoke('config:set', { dataDirs: dirs });
+    const label = labelInput.value.trim();
+    const current = await window.api.invoke('config:get');
+    const entry: DataDirEntry = label ? { path: val, label } : val;
+    const dirs = [...(current.dataDirs ?? []), entry];
+    const freshConfig = await window.api.invoke('config:set', { dataDirs: dirs });
     input.value = '';
-    const freshConfig = await (window as any).api.invoke('config:get') as Config;
+    labelInput.value = '';
+    window.__llmusageConfig = freshConfig;
     renderSettings(container, freshConfig);
   });
 
@@ -75,17 +104,17 @@ export function renderSettings(container: HTMLElement, config: Config): void {
   dirList.querySelectorAll('.settings-dir-remove').forEach(btn => {
     btn.addEventListener('click', async () => {
       const idx = parseInt((btn as HTMLElement).dataset.index ?? '0');
-      const current = await (window as any).api.invoke('config:get') as Config;
+      const current = await window.api.invoke('config:get');
       const dirs = [...(current.dataDirs ?? [])];
       dirs.splice(idx, 1);
-      await (window as any).api.invoke('config:set', { dataDirs: dirs });
-      const freshConfig = await (window as any).api.invoke('config:get') as Config;
+      const freshConfig = await window.api.invoke('config:set', { dataDirs: dirs });
+      window.__llmusageConfig = freshConfig;
       renderSettings(container, freshConfig);
     });
   });
 
   // Populate version link
-  (window as any).api.invoke('app:version').then((v: string) => {
+  window.api.invoke('app:version').then((v: string) => {
     const link = panel.querySelector('.settings-version-link') as HTMLAnchorElement;
     if (link) link.textContent = `v${v}`;
   });
@@ -95,7 +124,7 @@ export function toggleSettings(container: HTMLElement): void {
   visible = !visible;
   if (visible) {
     document.getElementById('panels')!.style.display = 'none';
-    (window as any).api.invoke('config:get').then((config: Config) => {
+    window.api.invoke('config:get').then((config: Config) => {
       renderSettings(container, config);
     });
   } else {
@@ -107,4 +136,12 @@ export function toggleSettings(container: HTMLElement): void {
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function defaultLabel(path: string): string {
+  if (path.includes('.codex/sessions') || path.includes('.codex\\sessions')) return 'codex';
+  const parts = path.split(/[\\/]/).filter(Boolean);
+  const parent = parts.at(-2);
+  if (parent?.startsWith('.')) return parent.slice(1);
+  return parent ?? parts.at(-1) ?? path;
 }

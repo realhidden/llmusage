@@ -1,7 +1,7 @@
 import type { TokenBucket, UsageBucket, SessionState, StoreSnapshot } from '../../shared/types.js';
 import type { RawEvent } from './parser.js';
 import { isUsageEvent } from './parser.js';
-import { dayKey, todayKey, last7Days } from '../../shared/time.js';
+import { dayKey, todayKey, last7Days, lastNDays, monthDays } from '../../shared/time.js';
 import { deriveSessionState } from './state.js';
 
 function emptyBucket(): TokenBucket {
@@ -41,6 +41,12 @@ type TimestampedTokens = {
   ts: number;
   total: number;
   dir: string;
+  filePath: string;
+};
+
+type StoredFile = {
+  dir: string;
+  events: RawEvent[];
 };
 
 export type SessionFileState = {
@@ -62,6 +68,7 @@ export type SessionFileState = {
 export class Store {
   private byDay = new Map<string, UsageBucket>();
   private bySession = new Map<string, SessionFileState>();
+  private byFile = new Map<string, StoredFile>();
   // Sorted by timestamp for rolling-window queries
   private tokenEvents: TimestampedTokens[] = [];
   private listeners: Array<() => void> = [];
@@ -78,9 +85,23 @@ export class Store {
     for (const fn of this.listeners) fn();
   }
 
-  ingest(filePath: string, events: RawEvent[], dir: string = ''): void {
+  ingest(filePath: string, events: RawEvent[], dir: string = '', emit: boolean = true): void {
     if (events.length === 0) return;
 
+    const existing = this.byFile.get(filePath);
+    if (existing) {
+      existing.events.push(...events);
+      existing.dir = dir;
+    } else {
+      this.byFile.set(filePath, { dir, events: [...events] });
+    }
+
+    this.ingestIntoAggregates(filePath, events, dir);
+
+    if (emit) this.emit();
+  }
+
+  private ingestIntoAggregates(filePath: string, events: RawEvent[], dir: string): void {
     let session = this.bySession.get(filePath);
 
     for (const ev of events) {
@@ -143,6 +164,7 @@ export class Store {
           ts: new Date(ev.timestamp).getTime(),
           total: bucketTotal(tk),
           dir,
+          filePath,
         });
 
         // Day aggregation
@@ -171,18 +193,30 @@ export class Store {
         }
       }
     }
-
-    this.emit();
   }
 
   removeFile(filePath: string): void {
-    this.bySession.delete(filePath);
+    if (!this.byFile.delete(filePath)) return;
+    this.rebuildAggregates();
+    this.emit();
   }
 
   reset(): void {
     this.byDay.clear();
     this.bySession.clear();
+    this.byFile.clear();
     this.tokenEvents = [];
+    this.emit();
+  }
+
+  private rebuildAggregates(): void {
+    const files = [...this.byFile.entries()];
+    this.byDay.clear();
+    this.bySession.clear();
+    this.tokenEvents = [];
+    for (const [filePath, file] of files) {
+      this.ingestIntoAggregates(filePath, file.events, file.dir);
+    }
   }
 
   private rollingWindowTotal(msAgo: number, dir?: string): number {
@@ -199,13 +233,15 @@ export class Store {
   snapshot(): StoreSnapshot {
     const today = todayKey();
     const days = last7Days();
-
-    const todayBucket = this.byDay.get(today) ?? emptyUsageBucket();
-
-    const last7 = days.map((d) => ({
+    const bucketFor = (d: string) => this.byDay.get(d) ?? emptyUsageBucket();
+    const mapDays = (range: string[]) => range.map((d) => ({
       day: d,
-      bucket: this.byDay.get(d) ?? emptyUsageBucket(),
+      bucket: bucketFor(d),
     }));
+
+    const todayBucket = bucketFor(today);
+
+    const last7 = mapDays(days);
 
     const now = Date.now();
     const nowISO = new Date(now).toISOString();
@@ -264,6 +300,12 @@ export class Store {
       generatedAt: nowISO,
       today: todayBucket,
       last7Days: last7,
+      usageRanges: {
+        last7Days: last7,
+        last30Days: mapDays(lastNDays(30)),
+        thisMonth: mapDays(monthDays(0)),
+        lastMonth: mapDays(monthDays(-1)),
+      },
       sessions,
       limits: {
         fiveHourUsed: this.rollingWindowTotal(5 * 60 * 60 * 1000),

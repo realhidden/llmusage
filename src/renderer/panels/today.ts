@@ -1,5 +1,5 @@
 import type { StoreSnapshot, DirLimits, QuotaWindow, PlanQuota, DirPlan } from '../../shared/types.js';
-import { formatCompact, bucketTotal, limitColor, modelColor, modelShort } from '../components/token-bar.js';
+import { formatCompact, bucketTotal, limitColor } from '../components/token-bar.js';
 
 let detailExpanded = false;
 
@@ -59,16 +59,7 @@ export function renderToday(container: HTMLElement, snapshot: StoreSnapshot): vo
   }
 
   const modelsEl = container.querySelector('#today-models') as HTMLElement;
-  if (modelsEl) {
-    const entries = Object.entries(today.byModel)
-      .filter(([, b]) => bucketTotal(b) > 0)
-      .sort((a, b) => bucketTotal(b[1]) - bucketTotal(a[1]));
-    modelsEl.innerHTML = entries.length === 0
-      ? ''
-      : entries.map(([m, b]) =>
-          `<span class="model-item"><span class="model-dot" style="background:${modelColor(m)}"></span>${modelShort(m)} ${formatCompact(bucketTotal(b))}</span>`
-        ).join('');
-  }
+  if (modelsEl) modelsEl.innerHTML = '';
 }
 
 function renderAllPlans(plans: DirPlan[]): string {
@@ -79,43 +70,51 @@ function renderAllPlans(plans: DirPlan[]): string {
 }
 
 function planHeading(plan: PlanQuota, dirLabel: string): string {
+  let providerLabel: string;
   switch (plan.provider) {
     case 'anthropic':
-      return plan.subscription ? `Claude ${capitalize(plan.subscription)}` : 'Claude';
+      providerLabel = plan.subscription ? `Claude ${capitalize(plan.subscription)}` : 'Claude';
+      break;
     case 'z.ai':
-      return 'Z.AI';
+      providerLabel = 'Z.AI';
+      break;
     case 'zhipu':
-      return 'Zhipu';
+      providerLabel = 'Zhipu';
+      break;
     default:
-      return dirLabel;
+      providerLabel = 'Unknown';
   }
+  return `${providerLabel} · ${dirLabel}`;
 }
 
 function renderPlanSection(plan: PlanQuota, dirLabel: string): string {
   const heading = planHeading(plan, dirLabel);
   const rows: string[] = [];
-  if (plan.fiveHour) rows.push(planRow('5h', plan.fiveHour));
-  if (plan.sevenDay) rows.push(planRow('7d', plan.sevenDay));
+  if (plan.fiveHour) rows.push(planCircle('5h', plan.fiveHour));
+  if (plan.sevenDay) rows.push(planCircle('7d', plan.sevenDay));
   if (plan.sevenDayOpus && plan.sevenDayOpus.utilization > 0) {
-    rows.push(planRow('opus', plan.sevenDayOpus));
+    rows.push(planCircle('opus', plan.sevenDayOpus));
   }
   return `
     <div class="limits-section">
       <div class="limits-heading">${escapeHtml(heading)}</div>
-      ${rows.join('')}
+      <div class="limit-circles">${rows.join('')}</div>
     </div>`;
 }
 
-function planRow(label: string, w: QuotaWindow): string {
+function planCircle(label: string, w: QuotaWindow): string {
   const pct = Math.max(0, Math.min(w.utilization, 100));
   const clock = w.resetsAt ? formatResetClock(w.resetsAt) : '';
   const tooltip = w.resetsAt ? `resets ${formatResetFull(w.resetsAt)}` : '';
   return `
-    <div class="limit-row">
-      <span class="limit-label">${label}</span>
-      <div class="limit-track"><div class="limit-fill ${limitColor(pct)}" style="width:${pct}%"></div></div>
-      <span class="limit-pct">${pct.toFixed(0)}%</span>
-      <span class="limit-reset" title="${escapeHtml(tooltip)}">${clock}</span>
+    <div class="limit-circle-card" title="${escapeHtml(tooltip)}">
+      <div class="limit-ring ${limitColor(pct)}" style="--pct:${pct}">
+        <span>${pct.toFixed(0)}</span>
+      </div>
+      <div class="limit-circle-meta">
+        <span class="limit-circle-label">${label}</span>
+        <span class="limit-circle-reset">${clock}</span>
+      </div>
     </div>`;
 }
 
@@ -133,8 +132,8 @@ function renderRollingDetail(snapshot: StoreSnapshot): string {
 
   return `
     <div class="today-detail">
-      <div class="today-detail-heading">Tokens burned (rolling)</div>
-      ${rows.join('')}
+      <div class="today-detail-heading">Rolling burn</div>
+      <div class="burn-grid">${rows.join('')}</div>
     </div>`;
 }
 
@@ -149,19 +148,17 @@ function rollingRow(label: string, used: number, cap?: number): string {
   if (cap) {
     const pct = Math.min((used / cap) * 100, 100);
     return `
-      <div class="limit-row">
-        <span class="limit-label">${escapeHtml(label)}</span>
-        <div class="limit-track"><div class="limit-fill ${limitColor(pct)}" style="width:${pct}%"></div></div>
-        <span class="limit-pct">${formatCompact(used)}</span>
-        <span class="limit-reset">of ${formatCompact(cap)}</span>
+      <div class="burn-card">
+        <span class="burn-label">${escapeHtml(label)}</span>
+        <span class="burn-value">${formatCompact(used)}</span>
+        <span class="burn-caption">${pct.toFixed(0)}% of ${formatCompact(cap)}</span>
       </div>`;
   }
   return `
-    <div class="limit-row">
-      <span class="limit-label">${escapeHtml(label)}</span>
-      <div class="limit-track"><div class="limit-fill unconfigured" style="width:0%"></div></div>
-      <span class="limit-pct">${formatCompact(used)}</span>
-      <span class="limit-reset"></span>
+    <div class="burn-card">
+      <span class="burn-label">${escapeHtml(label)}</span>
+      <span class="burn-value">${formatCompact(used)}</span>
+      <span class="burn-caption">no cap</span>
     </div>`;
 }
 

@@ -62,6 +62,12 @@ export type StoreSnapshot = {
   generatedAt: string;
   today: UsageBucket;
   last7Days: Array<{ day: string; bucket: UsageBucket }>;
+  usageRanges: {
+    last7Days: Array<{ day: string; bucket: UsageBucket }>;
+    last30Days: Array<{ day: string; bucket: UsageBucket }>;
+    thisMonth: Array<{ day: string; bucket: UsageBucket }>;
+    lastMonth: Array<{ day: string; bucket: UsageBucket }>;
+  };
   sessions: {
     active: SessionState[];
     recent: SessionState[];
@@ -88,6 +94,7 @@ export type Config = {
   };
   autoLaunch?: boolean;
   dataDirs?: DataDirEntry[];
+  theme?: 'system' | 'dark' | 'light';
 };
 
 export type Invokes = {

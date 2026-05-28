@@ -7,6 +7,7 @@ const configDir = join(homedir(), '.config', 'llmusage');
 const configPath = join(configDir, 'config.json');
 
 const defaultConfig: Config = {
+  theme: 'system',
   dataDirs: [
     join(homedir(), '.claude', 'projects'),
     join(homedir(), '.codex', 'sessions'),
