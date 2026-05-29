@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
-type InvokeChannel = 'store:snapshot' | 'config:get' | 'config:set' | 'app:openProject' | 'app:quit' | 'app:version';
+type InvokeChannel = 'store:snapshot' | 'config:get' | 'config:set' | 'app:openProject' | 'app:checkUpdate' | 'app:openUpdate' | 'app:quit' | 'app:version';
 type EventChannel = 'store:update' | 'error';
 
 const api = {

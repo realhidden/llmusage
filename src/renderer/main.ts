@@ -1,4 +1,4 @@
-import type { Config, StoreSnapshot } from '../shared/types.js';
+import type { Config, StoreSnapshot, UpdateCheckResult } from '../shared/types.js';
 import { renderToday } from './panels/today.js';
 import { renderWeek } from './panels/week.js';
 import { renderSessions } from './panels/sessions.js';
@@ -14,6 +14,7 @@ const statusDot = document.getElementById('status-dot') as HTMLElement;
 const quitBtn = document.getElementById('header-quit') as HTMLElement;
 const gearBtn = document.getElementById('header-gear') as HTMLElement;
 const refreshBtn = document.getElementById('header-refresh') as HTMLElement;
+const updateBanner = document.getElementById('update-banner') as HTMLElement;
 
 function applyTheme(theme: Config['theme'] = 'system'): void {
   document.body.dataset.theme = theme;
@@ -40,6 +41,32 @@ refreshBtn?.addEventListener('click', () => {
 gearBtn?.addEventListener('click', () => {
   toggleSettings(appEl);
 });
+
+function renderUpdateBanner(update: UpdateCheckResult): void {
+  if (!update.updateAvailable || !update.latestVersion || !update.releaseUrl) {
+    updateBanner.hidden = true;
+    updateBanner.innerHTML = '';
+    return;
+  }
+  updateBanner.hidden = false;
+  updateBanner.innerHTML = `
+    <span>Update ${escapeHtml(update.latestVersion)} available</span>
+    <button type="button" data-action="download">Download</button>
+    <button type="button" data-action="dismiss" title="Dismiss">&times;</button>
+  `;
+  updateBanner.querySelector('[data-action="download"]')?.addEventListener('click', () => {
+    window.api.invoke('app:openUpdate', { url: update.releaseUrl! });
+  });
+  updateBanner.querySelector('[data-action="dismiss"]')?.addEventListener('click', () => {
+    updateBanner.hidden = true;
+  });
+}
+
+function checkForUpdates(): void {
+  window.api.invoke('app:checkUpdate').then(renderUpdateBanner).catch((err: Error) => {
+    console.warn('Update check failed:', err);
+  });
+}
 
 function updateHeader(snap: StoreSnapshot): void {
   const total = bucketTotal(snap.today.tokens);
@@ -83,6 +110,7 @@ const unsub = window.api.subscribe('store:update', (snap: StoreSnapshot) => {
 window.api.invoke('store:snapshot').then((snap: StoreSnapshot) => {
   lastSnapshot = snap;
   render(snap);
+  checkForUpdates();
 }).catch((err: Error) => {
   console.error('Failed to get initial snapshot:', err);
   const panels = document.getElementById('panels');
@@ -90,3 +118,7 @@ window.api.invoke('store:snapshot').then((snap: StoreSnapshot) => {
     panels.innerHTML = '<div class="empty-state">Loading…</div>';
   }
 });
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}

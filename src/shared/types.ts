@@ -97,11 +97,22 @@ export type Config = {
   theme?: 'system' | 'dark' | 'light';
 };
 
+export type UpdateCheckResult = {
+  checkedAt: string;
+  currentVersion: string;
+  latestVersion: string | null;
+  updateAvailable: boolean;
+  releaseUrl: string | null;
+  error?: string;
+};
+
 export type Invokes = {
   'store:snapshot': { req: {}; res: StoreSnapshot };
   'config:get': { req: {}; res: Config };
   'config:set': { req: Partial<Config>; res: Config };
   'app:openProject': { req: { cwd: string }; res: void };
+  'app:checkUpdate': { req: {}; res: UpdateCheckResult };
+  'app:openUpdate': { req: { url: string }; res: void };
   'app:quit': { req: {}; res: void };
   'app:version': { req: {}; res: string };
 };

@@ -9,6 +9,7 @@ import { loadConfig, saveConfig } from './config.js';
 import { registerIPC } from './ipc.js';
 import { getIcon, initIcons, type IconState } from './tray-icon.js';
 import { getQuotaForDir } from './quota.js';
+import { checkForUpdate, isGitHubReleaseUrl } from './update.js';
 import type { StoreSnapshot, Config, DirLimits, DirPlan } from '../shared/types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -232,6 +233,13 @@ app.whenReady().then(async () => {
     'app:openProject': async (_event, args) => {
       const { cwd } = args as { cwd: string };
       shell.showItemInFolder(cwd);
+    },
+    'app:checkUpdate': async () => checkForUpdate(app.getVersion()),
+    'app:openUpdate': async (_event, args) => {
+      const { url } = args as { url: string };
+      if (isGitHubReleaseUrl(url)) {
+        await shell.openExternal(url);
+      }
     },
     'app:quit': async () => app.quit(),
     'app:version': async () => app.getVersion(),

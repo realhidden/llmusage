@@ -183,6 +183,44 @@ body {
   color: var(--red);
 }
 
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  background: color-mix(in srgb, var(--fg-accent) 18%, var(--bg-panel));
+  border-bottom: 1px solid rgba(128, 128, 128, 0.15);
+  color: var(--fg);
+  font-size: 11px;
+}
+
+.update-banner[hidden] {
+  display: none;
+}
+
+.update-banner span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.update-banner button {
+  border: 1px solid rgba(128, 128, 128, 0.25);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  padding: 2px 7px;
+}
+
+.update-banner button:hover {
+  border-color: var(--fg-accent);
+}
+
 /* Panels */
 .panel {
   padding: 12px;
