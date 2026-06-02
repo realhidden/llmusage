@@ -2,6 +2,7 @@ import type { TokenBucket, UsageBucket, SessionState, StoreSnapshot } from '../.
 import type { RawEvent } from './parser.js';
 import { isUsageEvent } from './parser.js';
 import { dayKey, todayKey, last7Days, lastNDays, monthDays } from '../../shared/time.js';
+import { resolveProjectCwd } from '../../shared/paths.js';
 import { deriveSessionState } from './state.js';
 import type { Quota } from '../quota.js';
 import type { CodexRateLimits } from '../codex/parser.js';
@@ -188,10 +189,11 @@ export class Store {
         addBucket(dayModel, tk);
 
         if (ev.cwd) {
-          let dayProject = dayBucket.byProject[ev.cwd];
+          const projectCwd = resolveProjectCwd(ev.cwd);
+          let dayProject = dayBucket.byProject[projectCwd];
           if (!dayProject) {
             dayProject = emptyBucket();
-            dayBucket.byProject[ev.cwd] = dayProject;
+            dayBucket.byProject[projectCwd] = dayProject;
           }
           addBucket(dayProject, tk);
         }

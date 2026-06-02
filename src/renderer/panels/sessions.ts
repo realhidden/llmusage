@@ -1,4 +1,5 @@
 import type { StoreSnapshot, SessionState } from '../../shared/types.js';
+import { resolveProjectCwd } from '../../shared/paths.js';
 import { formatCompact, bucketTotal, timeAgo, modelColor, modelShort } from '../components/token-bar.js';
 
 let expandedSessionId: string | null = null;
@@ -69,10 +70,10 @@ type ProjectGroup = {
 function groupSessions(sessions: SessionState[]): ProjectGroup[] {
   const groups = new Map<string, ProjectGroup>();
   for (const s of sessions) {
-    const key = s.cwd || s.filePath;
+    const key = resolveProjectCwd(s.cwd) || s.filePath;
     const group = groups.get(key) ?? {
       key,
-      name: s.cwd.split('/').pop() || 'unknown',
+      name: key.split('/').pop() || 'unknown',
       state: s.state,
       sessions: [],
       tokens: 0,
@@ -174,7 +175,7 @@ function stableVariant(key: string): number {
 }
 
 function renderSessionRow(s: SessionState): string {
-  const name = s.cwd.split('/').pop() ?? s.cwd;
+  const name = resolveProjectCwd(s.cwd).split('/').pop() ?? s.cwd;
   const total = bucketTotal(s.tokens);
   const stateLabel = s.state === 'waiting-for-input' ? 'waiting' : s.state;
 
