@@ -9,11 +9,18 @@ export type NormalizedDir = {
   weeklyTokens?: number;
 };
 
+function expandTilde(p: string): string {
+  if (p.startsWith('~/')) return homedir() + p.slice(1);
+  return p;
+}
+
 function defaultLabel(path: string): string {
   // ~/.claude/projects -> claude
   // ~/.glm/projects   -> glm
   // ~/.codex/sessions -> codex
+  // ~/.localqwen/projects -> qwen
   if (path.includes('.codex/sessions') || path.includes('.codex\\sessions')) return 'codex';
+  if (path.includes('.localqwen/projects') || path.includes('.localqwen\\projects')) return 'qwen';
   const parent = basename(dirname(path));
   if (parent && parent.startsWith('.')) return parent.slice(1);
   if (parent) return parent;
@@ -22,11 +29,13 @@ function defaultLabel(path: string): string {
 
 export function normalizeDir(entry: DataDirEntry): NormalizedDir {
   if (typeof entry === 'string') {
-    return { path: entry, label: defaultLabel(entry) };
+    const path = expandTilde(entry);
+    return { path, label: defaultLabel(path) };
   }
+  const path = expandTilde(entry.path);
   return {
-    path: entry.path,
-    label: entry.label ?? defaultLabel(entry.path),
+    path,
+    label: entry.label ?? defaultLabel(path),
     fiveHourTokens: entry.fiveHourTokens,
     weeklyTokens: entry.weeklyTokens,
   };
@@ -36,6 +45,7 @@ export function dirsFromConfig(config: Config): NormalizedDir[] {
   const entries = config.dataDirs ?? [
     `${homedir()}/.claude/projects`,
     `${homedir()}/.codex/sessions`,
+    `${homedir()}/.localqwen/projects`,
   ];
   return entries.map(normalizeDir);
 }

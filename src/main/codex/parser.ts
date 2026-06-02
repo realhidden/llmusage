@@ -1,5 +1,16 @@
 import type { RawEvent } from '../claude/parser.js';
 
+type CodexRateLimitWindow = {
+  used_percent: number;
+  window_minutes: number;
+  resets_at: number;
+};
+
+export type CodexRateLimits = {
+  primary: CodexRateLimitWindow;
+  secondary: CodexRateLimitWindow;
+};
+
 type CodexEvent = {
   timestamp?: string;
   type: string;
@@ -18,6 +29,7 @@ type CodexEvent = {
         reasoning_output_tokens?: number;
       };
     };
+    rate_limits?: CodexRateLimits & { credits?: { has_credits?: boolean; unlimited?: boolean; balance?: string } };
     message?: string;
   };
 };
@@ -49,13 +61,14 @@ export function parseBuffer(buffer: string): { events: CodexEvent[]; remainder: 
   return { events, remainder };
 }
 
-export function toRawEvents(codexEvents: CodexEvent[]): RawEvent[] {
+export function toRawEvents(codexEvents: CodexEvent[]): { events: RawEvent[]; rateLimits?: CodexRateLimits } {
   const raw: RawEvent[] = [];
   let sessionId = '';
   let cwd = '';
   let gitBranch = '';
   let model = '';
   let hasPendingAssistant = false;
+  let rateLimits: CodexRateLimits | undefined;
 
   for (const ev of codexEvents) {
     const ts = ev.timestamp ?? '';
@@ -93,7 +106,13 @@ export function toRawEvents(codexEvents: CodexEvent[]): RawEvent[] {
 
     // token_count arrives AFTER the assistant response_item — emit here
     if (ev.type === 'event_msg' && pt === 'token_count' && p.info?.last_token_usage) {
-      if (!hasPendingAssistant) continue;
+      if (!hasPendingAssistant) {
+        // Still grab rate_limits even without a pending assistant
+        if (p.rate_limits?.primary && p.rate_limits?.secondary) {
+          rateLimits = { primary: p.rate_limits.primary, secondary: p.rate_limits.secondary };
+        }
+        continue;
+      }
       hasPendingAssistant = false;
       const u = p.info.last_token_usage;
       raw.push({
@@ -112,9 +131,12 @@ export function toRawEvents(codexEvents: CodexEvent[]): RawEvent[] {
           },
         },
       });
+      if (p.rate_limits?.primary && p.rate_limits?.secondary) {
+        rateLimits = { primary: p.rate_limits.primary, secondary: p.rate_limits.secondary };
+      }
       continue;
     }
   }
 
-  return raw;
+  return { events: raw, rateLimits };
 }

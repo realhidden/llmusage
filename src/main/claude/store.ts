@@ -3,6 +3,8 @@ import type { RawEvent } from './parser.js';
 import { isUsageEvent } from './parser.js';
 import { dayKey, todayKey, last7Days, lastNDays, monthDays } from '../../shared/time.js';
 import { deriveSessionState } from './state.js';
+import type { Quota } from '../quota.js';
+import type { CodexRateLimits } from '../codex/parser.js';
 
 function emptyBucket(): TokenBucket {
   return { input: 0, output: 0, cacheCreate: 0, cacheRead: 0 };
@@ -72,6 +74,8 @@ export class Store {
   // Sorted by timestamp for rolling-window queries
   private tokenEvents: TimestampedTokens[] = [];
   private listeners: Array<() => void> = [];
+  // Latest Codex rate limits per directory
+  private codexRateLimits = new Map<string, CodexRateLimits>();
 
   onChange(fn: () => void): () => void {
     this.listeners.push(fn);
@@ -318,5 +322,28 @@ export class Store {
 
   rollingByDir(dir: string, msAgo: number): number {
     return this.rollingWindowTotal(msAgo, dir);
+  }
+
+  updateCodexRateLimits(dir: string, limits: CodexRateLimits): void {
+    this.codexRateLimits.set(dir, limits);
+  }
+
+  getCodexQuota(dir: string): Quota | null {
+    const limits = this.codexRateLimits.get(dir);
+    if (!limits) return null;
+    return {
+      fetchedAt: new Date().toISOString(),
+      provider: 'codex',
+      subscription: null,
+      fiveHour: {
+        utilization: limits.primary.used_percent,
+        resetsAt: new Date(limits.primary.resets_at * 1000).toISOString(),
+      },
+      sevenDay: {
+        utilization: limits.secondary.used_percent,
+        resetsAt: new Date(limits.secondary.resets_at * 1000).toISOString(),
+      },
+      sevenDayOpus: null,
+    };
   }
 }

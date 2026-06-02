@@ -5,8 +5,10 @@ import type { Store } from './store.js';
 import { parseBuffer as claudeParseBuffer } from './parser.js';
 import type { RawEvent } from './parser.js';
 import { listSessionFiles as claudeListFiles } from './paths.js';
-import { parseBuffer as codexParseBuffer, toRawEvents } from '../codex/parser.js';
+import { parseBuffer as codexParseBuffer, toRawEvents as codexToRawEvents, type CodexRateLimits } from '../codex/parser.js';
 import { listSessionFiles as codexListFiles } from '../codex/paths.js';
+import { parseBuffer as qwenParseBuffer, toRawEvents as qwenToRawEvents } from '../qwen/parser.js';
+import { listSessionFiles as qwenListFiles } from '../qwen/paths.js';
 
 type ParsedChunk = { events: RawEvent[]; remainder: string };
 
@@ -14,14 +16,25 @@ function isCodexDir(dir: string): boolean {
   return dir.includes('.codex/sessions') || dir.includes('.codex\\sessions');
 }
 
-function listFiles(dir: string): Promise<string[]> {
-  return isCodexDir(dir) ? codexListFiles(dir) : claudeListFiles(dir);
+function isQwenDir(dir: string): boolean {
+  return dir.includes('.localqwen/projects') || dir.includes('.localqwen\\projects');
 }
 
-function parseChunk(content: string, dir: string): ParsedChunk {
+function listFiles(dir: string): Promise<string[]> {
+  if (isCodexDir(dir)) return codexListFiles(dir);
+  if (isQwenDir(dir)) return qwenListFiles(dir);
+  return claudeListFiles(dir);
+}
+
+function parseChunk(content: string, dir: string): ParsedChunk & { rateLimits?: CodexRateLimits } {
   if (isCodexDir(dir)) {
     const { events: codexEvents, remainder } = codexParseBuffer(content);
-    return { events: toRawEvents(codexEvents), remainder };
+    const { events, rateLimits } = codexToRawEvents(codexEvents);
+    return { events, remainder, rateLimits };
+  }
+  if (isQwenDir(dir)) {
+    const { events: qwenEvents, remainder } = qwenParseBuffer(content);
+    return { events: qwenToRawEvents(qwenEvents), remainder };
   }
   return claudeParseBuffer(content);
 }
@@ -63,14 +76,15 @@ export class Watcher {
         try {
           const s = await stat(filePath);
           const content = await readFile(filePath, 'utf-8');
-          const { events, remainder } = parseChunk(content, dir);
+          const parsed = parseChunk(content, dir);
           this.offsets.set(filePath, {
             inode: s.ino,
             size: s.size,
-            offset: s.size - remainder.length,
-            partialLine: remainder,
+            offset: s.size - parsed.remainder.length,
+            partialLine: parsed.remainder,
           });
-          this.store.ingest(filePath, events, dir);
+          this.store.ingest(filePath, parsed.events, dir);
+          if (parsed.rateLimits) this.store.updateCodexRateLimits(dir, parsed.rateLimits);
         } catch (err) {
           this.onError?.('cold-scan', `Failed to read ${filePath}: ${String(err)}`);
         }
@@ -154,28 +168,30 @@ export class Watcher {
 
     const newBytes = await readBytes(filePath, existing.offset, bytesToRead);
     const combined = existing.partialLine + newBytes;
-    const { events, remainder } = parseChunk(combined, dir);
+    const parsed = parseChunk(combined, dir);
 
     this.offsets.set(filePath, {
       inode: s.ino,
       size: s.size,
-      offset: s.size - remainder.length,
-      partialLine: remainder,
+      offset: s.size - parsed.remainder.length,
+      partialLine: parsed.remainder,
     });
 
-    this.store.ingest(filePath, events, dir);
+    this.store.ingest(filePath, parsed.events, dir);
+    if (parsed.rateLimits) this.store.updateCodexRateLimits(dir, parsed.rateLimits);
   }
 
   private async coldReadFile(filePath: string, s: { ino: number; size: number }, dir: string): Promise<void> {
     const content = await readFile(filePath, 'utf-8');
-    const { events, remainder } = parseChunk(content, dir);
+    const parsed = parseChunk(content, dir);
     this.offsets.set(filePath, {
       inode: s.ino,
       size: s.size,
-      offset: s.size - remainder.length,
-      partialLine: remainder,
+      offset: s.size - parsed.remainder.length,
+      partialLine: parsed.remainder,
     });
-    this.store.ingest(filePath, events, dir);
+    this.store.ingest(filePath, parsed.events, dir);
+    if (parsed.rateLimits) this.store.updateCodexRateLimits(dir, parsed.rateLimits);
   }
 }
 

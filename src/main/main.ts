@@ -90,12 +90,14 @@ async function decorateSnapshot(snap: StoreSnapshot, config: Config): Promise<St
   snap.limits.byDir = byDir;
 
   // Fan out per-dir quota fetches in parallel; quota module handles
-  // per-provider routing and 60s caching.
+  // per-provider routing and 60s caching. Codex gets rate limits from
+  // session events via the store instead of an API call.
+  const isCodexDir = (p: string) => p.includes('.codex/sessions') || p.includes('.codex\\sessions');
   const plans: DirPlan[] = await Promise.all(
     dirs.map(async d => ({
       dir: d.path,
       label: d.label,
-      plan: await getQuotaForDir(d.path),
+      plan: isCodexDir(d.path) ? store.getCodexQuota(d.path) : await getQuotaForDir(d.path),
     }))
   );
   snap.limits.plans = plans.filter(p => p.plan != null);

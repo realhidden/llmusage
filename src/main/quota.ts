@@ -19,7 +19,7 @@ export type Quota = {
   sevenDayOpus: QuotaWindow | null;
 };
 
-export type ProviderKind = 'anthropic' | 'z.ai' | 'zhipu' | 'unknown';
+export type ProviderKind = 'anthropic' | 'z.ai' | 'zhipu' | 'codex' | 'unknown';
 
 type ProviderConfig = {
   kind: ProviderKind;
@@ -297,6 +297,8 @@ export async function getQuotaFor(p: ProviderConfig): Promise<Quota | null> {
 export async function getQuotaForDir(dir: string): Promise<Quota | null> {
   // Codex has its own rate-limit reporting in session events, not via API
   if (dir.includes('.codex/sessions') || dir.includes('.codex\\sessions')) return null;
+  // Local Qwen has no remote quota API
+  if (dir.includes('.localqwen/projects') || dir.includes('.localqwen\\projects')) return null;
   const provider = await detectProvider(dir);
   return getQuotaFor(provider);
 }

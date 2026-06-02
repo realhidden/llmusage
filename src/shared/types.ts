@@ -45,7 +45,7 @@ export type QuotaWindow = {
 
 export type PlanQuota = {
   fetchedAt: string;
-  provider: 'anthropic' | 'z.ai' | 'zhipu' | 'unknown';
+  provider: 'anthropic' | 'z.ai' | 'zhipu' | 'codex' | 'qwen' | 'unknown';
   subscription: string | null;
   fiveHour: QuotaWindow | null;
   sevenDay: QuotaWindow | null;

@@ -8,6 +8,8 @@ const MODEL_COLORS: Record<string, string> = {
   'glm-5.1': '#f38ba8',
   'glm-5-turbo': '#fab387',
   'glm-4.5-air': '#94e2d5',
+  'hidden/coder-opus': '#74c7ec',
+  'qwen-coder': '#74c7ec',
 };
 
 export function modelColor(model: string): string {
@@ -23,6 +25,8 @@ export function modelShort(model: string): string {
     'glm-5.1': 'glm-5.1',
     'glm-5-turbo': 'glm-5t',
     'glm-4.5-air': 'glm-4.5',
+    'hidden/coder-opus': 'qwen',
+    'qwen-coder': 'qwen',
   };
   return map[model] ?? model.replace('claude-', '').replace('-20251001', '');
 }
