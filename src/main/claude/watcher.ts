@@ -9,6 +9,8 @@ import { parseBuffer as codexParseBuffer, toRawEvents as codexToRawEvents, type 
 import { listSessionFiles as codexListFiles } from '../codex/paths.js';
 import { parseBuffer as qwenParseBuffer, toRawEvents as qwenToRawEvents } from '../qwen/parser.js';
 import { listSessionFiles as qwenListFiles } from '../qwen/paths.js';
+import { parseBuffer as zcodeParseBuffer } from '../zcode/parser.js';
+import { listSessionFiles as zcodeListFiles } from '../zcode/paths.js';
 
 type ParsedChunk = { events: RawEvent[]; remainder: string };
 
@@ -20,9 +22,14 @@ function isQwenDir(dir: string): boolean {
   return dir.includes('.localqwen/projects') || dir.includes('.localqwen\\projects');
 }
 
+function isZcodeDir(dir: string): boolean {
+  return dir.includes('.zcode/cli/rollout') || dir.includes('.zcode\\cli\\rollout');
+}
+
 function listFiles(dir: string): Promise<string[]> {
   if (isCodexDir(dir)) return codexListFiles(dir);
   if (isQwenDir(dir)) return qwenListFiles(dir);
+  if (isZcodeDir(dir)) return zcodeListFiles(dir);
   return claudeListFiles(dir);
 }
 
@@ -35,6 +42,9 @@ function parseChunk(content: string, dir: string): ParsedChunk & { rateLimits?: 
   if (isQwenDir(dir)) {
     const { events: qwenEvents, remainder } = qwenParseBuffer(content);
     return { events: qwenToRawEvents(qwenEvents), remainder };
+  }
+  if (isZcodeDir(dir)) {
+    return zcodeParseBuffer(content);
   }
   return claudeParseBuffer(content);
 }

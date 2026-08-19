@@ -19,8 +19,10 @@ function defaultLabel(path: string): string {
   // ~/.glm/projects   -> glm
   // ~/.codex/sessions -> codex
   // ~/.localqwen/projects -> qwen
+  // ~/.zcode/cli/rollout -> zcode
   if (path.includes('.codex/sessions') || path.includes('.codex\\sessions')) return 'codex';
   if (path.includes('.localqwen/projects') || path.includes('.localqwen\\projects')) return 'qwen';
+  if (path.includes('.zcode/cli/rollout') || path.includes('.zcode\\cli\\rollout')) return 'zcode';
   const parent = basename(dirname(path));
   if (parent && parent.startsWith('.')) return parent.slice(1);
   if (parent) return parent;
@@ -46,6 +48,7 @@ export function dirsFromConfig(config: Config): NormalizedDir[] {
     `${homedir()}/.claude/projects`,
     `${homedir()}/.codex/sessions`,
     `${homedir()}/.localqwen/projects`,
+    `${homedir()}/.zcode/cli/rollout`,
   ];
   return entries.map(normalizeDir);
 }

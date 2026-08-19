@@ -11,6 +11,8 @@ const defaultConfig: Config = {
   dataDirs: [
     join(homedir(), '.claude', 'projects'),
     join(homedir(), '.codex', 'sessions'),
+    join(homedir(), '.localqwen', 'projects'),
+    join(homedir(), '.zcode', 'cli', 'rollout'),
   ],
 };
 
