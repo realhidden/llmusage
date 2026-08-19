@@ -36,6 +36,19 @@ function playCompletionSound(): void {
   });
 }
 
+function showCompletionNotification(session: { cwd: string; models: string[] }): void {
+  const project = session.cwd.split('/').filter(Boolean).pop() ?? session.cwd;
+  const model = session.models[0] ?? 'session';
+  const provider = model.includes('claude') ? 'Claude' : model.includes('gpt') ? 'Codex' : model.includes('qwen') || model.includes('glm') ? 'Qwen' : model;
+  const title = `${provider} in ${project}`;
+  const body = 'Done — waiting for input';
+  const n = new Notification({ title, body });
+  n.on('click', () => {
+    shell.showItemInFolder(session.cwd);
+  });
+  n.show();
+}
+
 function paintTray(state: IconState): void {
   const tray = mb?.tray;
   if (!tray) return;
@@ -58,6 +71,10 @@ function updateTrayIcon(snap: StoreSnapshot): void {
     // Completion sound: all running sessions just finished, now waiting for input
     if (lastIconState === 'running' && state === 'waiting') {
       playCompletionSound();
+      const waiting = snap.sessions.active.filter(s => s.state === 'waiting-for-input');
+      for (const s of waiting) {
+        showCompletionNotification(s);
+      }
     }
     lastIconState = state;
     tray.setToolTip(TOOLTIPS[state]);
