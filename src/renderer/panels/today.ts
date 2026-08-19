@@ -127,8 +127,8 @@ function renderRollingDetail(snapshot: StoreSnapshot): string {
   const rows = showDirs
     ? byDir.flatMap(d => dirRows(d, plans.find(p => p.dir === d.path)?.plan ?? null))
     : [
-        rollingRow('5h',  limits.fiveHourUsed,  limits.fiveHourTokens, null),
-        rollingRow('7d',  limits.weeklyUsed,    limits.weeklyTokens, null),
+        rollingRow('5h',  limits.fiveHourUsed,  limits.fiveHourTokens, null, 5 * 3600_000),
+        rollingRow('7d',  limits.weeklyUsed,    limits.weeklyTokens, null, 7 * 86400_000),
       ];
 
   return `
@@ -140,28 +140,42 @@ function renderRollingDetail(snapshot: StoreSnapshot): string {
 
 function dirRows(d: DirLimits, plan: DirPlan['plan'] = null): string[] {
   return [
-    rollingRow(`${d.label} 5h`, d.fiveHourUsed, d.fiveHourTokens, plan?.fiveHour?.resetsAt ?? null),
-    rollingRow(`${d.label} 7d`, d.weeklyUsed,   d.weeklyTokens,   plan?.sevenDay?.resetsAt ?? null),
+    rollingRow(`${d.label} 5h`, d.fiveHourUsed, d.fiveHourTokens, plan?.fiveHour?.resetsAt ?? null, 5 * 3600_000),
+    rollingRow(`${d.label} 7d`, d.weeklyUsed,   d.weeklyTokens,   plan?.sevenDay?.resetsAt ?? null, 7 * 86400_000),
   ];
 }
 
-function rollingRow(label: string, used: number, cap?: number, resetsAt?: string | null): string {
+function rollingRow(label: string, used: number, cap?: number, resetsAt?: string | null, windowMs?: number): string {
   const countdown = resetsAt ? formatCountdown(resetsAt) : null;
+  const pace = paceProjection(used, cap, windowMs);
   if (cap) {
     const pct = Math.min((used / cap) * 100, 100);
     return `
       <div class="burn-card">
         <span class="burn-label">${escapeHtml(label)}</span>
         <span class="burn-value">${formatCompact(used)}</span>
-        <span class="burn-caption">${pct.toFixed(0)}% of ${formatCompact(cap)}${countdown ? ` · resets in ${countdown}` : ''}</span>
+        <span class="burn-caption">${pct.toFixed(0)}% of ${formatCompact(cap)}${countdown ? ` · resets in ${countdown}` : ''}${pace ? ` · ${pace}` : ''}</span>
       </div>`;
   }
   return `
     <div class="burn-card">
       <span class="burn-label">${escapeHtml(label)}</span>
       <span class="burn-value">${formatCompact(used)}</span>
-      <span class="burn-caption">${countdown ? `resets in ${countdown}` : 'no cap'}</span>
+      <span class="burn-caption">${countdown ? `resets in ${countdown}` : 'no cap'}${pace ? ` · ${pace}` : ''}</span>
     </div>`;
+}
+
+function paceProjection(used: number, cap: number | undefined, windowMs?: number): string | null {
+  if (!cap || !windowMs || used === 0) return null;
+  const remaining = cap - used;
+  if (remaining <= 0) return 'exhausted';
+  const windowHours = windowMs / 3600_000;
+  const ratePerHour = used / windowHours;
+  const hoursToEmpty = remaining / ratePerHour;
+  if (hoursToEmpty >= windowHours) return null; // won't deplete before window resets
+  const h = Math.floor(hoursToEmpty);
+  const m = Math.round((hoursToEmpty - h) * 60);
+  return `~${h}h${m > 0 ? ` ${m}m` : ''} left at pace`;
 }
 
 function formatCountdown(iso: string): string | null {
