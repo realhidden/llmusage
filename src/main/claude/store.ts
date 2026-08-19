@@ -66,6 +66,7 @@ export type SessionFileState = {
   lastAssistantStopReason: string | null;
   lastPrompt: string | null;
   assistantTurns: number;
+  lastContextTokens: number;
 };
 
 export class Store {
@@ -136,6 +137,7 @@ export class Store {
           lastAssistantStopReason: null,
           lastPrompt: null,
           assistantTurns: 0,
+          lastContextTokens: 0,
         };
         this.bySession.set(filePath, session);
       }
@@ -163,6 +165,7 @@ export class Store {
 
         session.assistantTurns++;
         session.lastAssistantStopReason = ev.message.stop_reason ?? null;
+        session.lastContextTokens = (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
 
         // Rolling-window index
         this.tokenEvents.push({
@@ -287,6 +290,7 @@ export class Store {
         lastPrompt: s.lastPrompt,
         state,
         assistantTurns: s.assistantTurns,
+        contextTokens: s.lastContextTokens,
       });
     }
 

@@ -190,6 +190,19 @@ function renderSessionRow(s: SessionState): string {
       ).join('')
     : (s.models.length > 0 ? `<span class="session-model">${escapeHtml(s.models.map(m => modelShort(m)).join(', '))}</span>` : '');
 
+  const ctxLimit = contextLimit(dominantModel(s));
+  const ctxPct = ctxLimit > 0 ? (s.contextTokens / ctxLimit) * 100 : 0;
+
+  const ctxBar = s.contextTokens > 0
+    ? `<div class="ctx-bar" title="${formatCompact(s.contextTokens)} / ${formatCompact(ctxLimit)} ctx">
+        <div class="ctx-bar-fill ${ctxPct > 90 ? 'ctx-high' : ctxPct > 60 ? 'ctx-mid' : ''}" style="width:${Math.min(ctxPct, 100)}%"></div>
+      </div>`
+    : '';
+
+  const ctxLabel = s.contextTokens > 0
+    ? `<span class="ctx-label">${formatCompact(s.contextTokens)}/${formatCompact(ctxLimit)} ctx</span>`
+    : '';
+
   let html = `<div class="session-row compact" data-session-id="${s.sessionId}">
     <div class="session-header">
       <span class="session-dot ${s.state}"></span>
@@ -197,7 +210,8 @@ function renderSessionRow(s: SessionState): string {
       <span class="session-branch">${escapeHtml(s.gitBranch || '—')}</span>
       <span class="session-badge ${s.state}">${stateLabel}</span>
     </div>
-    <div class="session-meta">${modelChips}<span class="session-meta-stat">${s.assistantTurns} turns · ${formatCompact(total)} tok</span></div>`;
+    <div class="session-meta">${modelChips}<span class="session-meta-stat">${s.assistantTurns} turns · ${formatCompact(total)} tok</span></div>
+    ${ctxBar ? `<div class="session-ctx">${ctxLabel}${ctxBar}</div>` : ''}`;
 
   if (s.lastPrompt) {
     const truncated = s.lastPrompt.length > 60 ? s.lastPrompt.slice(0, 60) + '…' : s.lastPrompt;
@@ -259,6 +273,11 @@ function renderSessionDetail(s: SessionState): string {
 
   html += '</div>';
   return html;
+}
+
+function contextLimit(model: string): number {
+  if (model.includes('opus')) return 1_000_000;
+  return 200_000;
 }
 
 function escapeHtml(s: string): string {

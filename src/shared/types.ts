@@ -27,6 +27,7 @@ export type SessionState = {
   lastPrompt: string | null;
   state: 'running' | 'waiting-for-input' | 'idle' | 'done';
   assistantTurns: number;
+  contextTokens: number;
 };
 
 export type DirLimits = {
