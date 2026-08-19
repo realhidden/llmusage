@@ -11,7 +11,7 @@ import { registerIPC } from './ipc.js';
 import { getIcon, initIcons, type IconState } from './tray-icon.js';
 import { getQuotaForDir } from './quota.js';
 import { checkForUpdate, isGitHubReleaseUrl } from './update.js';
-import type { StoreSnapshot, Config, DirLimits, DirPlan } from '../shared/types.js';
+import type { StoreSnapshot, Config, DirLimits, DirPlan, PlanQuota } from '../shared/types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isDev = process.env.NODE_ENV === 'development';
@@ -154,14 +154,37 @@ async function decorateSnapshot(snap: StoreSnapshot, config: Config): Promise<St
   // session events via the store instead of an API call.
   const isCodexDir = (p: string) => p.includes('.codex/sessions') || p.includes('.codex\\sessions');
   const plans: DirPlan[] = await Promise.all(
-    dirs.map(async d => ({
-      dir: d.path,
-      label: d.label,
-      plan: isCodexDir(d.path) ? store.getCodexQuota(d.path) : await getQuotaForDir(d.path),
-    }))
+    byDir.map(async d => {
+      const plan = isCodexDir(d.path)
+        ? store.getCodexQuota(d.path)
+        : await getQuotaForDir(d.path);
+      // When no live quota is available, degrade to a file-based estimate:
+      // utilization derived from rolling token counts against configured caps.
+      return { dir: d.path, label: d.label, plan: plan ?? estimatePlan(d, config) };
+    })
   );
   snap.limits.plans = plans.filter(p => p.plan != null);
   return snap;
+}
+
+function estimatePlan(d: DirLimits, config: Config): PlanQuota | null {
+  const fiveHourCap = d.fiveHourTokens ?? config.limits?.fiveHourTokens;
+  const weeklyCap = d.weeklyTokens ?? config.limits?.weeklyTokens;
+  const fiveHour = fiveHourCap && d.fiveHourUsed > 0
+    ? { utilization: Math.min((d.fiveHourUsed / fiveHourCap) * 100, 100), resetsAt: null }
+    : null;
+  const sevenDay = weeklyCap && d.weeklyUsed > 0
+    ? { utilization: Math.min((d.weeklyUsed / weeklyCap) * 100, 100), resetsAt: null }
+    : null;
+  if (!fiveHour && !sevenDay) return null;
+  return {
+    fetchedAt: new Date().toISOString(),
+    provider: 'anthropic',
+    subscription: 'estimated',
+    fiveHour,
+    sevenDay,
+    sevenDayOpus: null,
+  };
 }
 
 function createWatcher(config: Config): Watcher {
