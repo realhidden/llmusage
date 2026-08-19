@@ -8,6 +8,16 @@
 - [x] Completion sound (afplay Glass.aiff on running→waiting)
 - [x] `--resume` / "what did we do lately" CLI feature
 - [x] Package updates
+- [x] Feature 1 — Context window indicator (per-session ctx bar in sessions panel)
+- [x] Feature 2 — Reset countdown (per-dir rolling burn)
+- [x] Feature 3 — Pace / burn-rate projection
+- [x] Feature 4 — Completion notification (macOS Notification + Finder click)
+- [x] Feature 5 — Activity linger (4s, cancellable)
+- [x] Feature 6 — Budget threshold alerts (75% / 95%)
+- [x] Feature 7 — Cost tracking (USD) per session + daily
+- [x] Feature 8 — Charts in popover: already present (v0.2.0 USAGE stacked-bar panel); skipped
+- [x] Feature 9 — Real Claude rate limits: live OAuth fetch already present; added file-based estimate fallback
+- [x] Feature 10 — `scan --json` CLI output (+ `scan:json` npm script)
 
 ---
 
