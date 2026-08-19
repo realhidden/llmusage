@@ -7,6 +7,7 @@ import type { SessionState } from '../../shared/types.js';
 
 const args = process.argv.slice(2);
 const showResume = args.includes('--resume') || args.includes('--lately');
+const asJson = args.includes('--json');
 
 function providerFor(filePath: string): string {
   if (filePath.includes('.codex/sessions') || filePath.includes('.codex\\sessions')) return 'codex';
@@ -47,6 +48,12 @@ async function main(): Promise<void> {
   await watcher.coldScan();
 
   const snap = store.snapshot();
+
+  if (asJson) {
+    // Machine-readable dump of the full snapshot for piping into other tools.
+    process.stdout.write(JSON.stringify(snap, null, 2) + '\n');
+    return;
+  }
 
   if (showResume) {
     printResume(snap.sessions.active, snap.sessions.recent);

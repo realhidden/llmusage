@@ -16,6 +16,7 @@
     "dist": "npm run build && electron-builder",
     "scan": "node dist/main/main/cli/scan.js",
     "scan:resume": "node dist/main/main/cli/scan.js --resume",
+    "scan:json": "node dist/main/main/cli/scan.js --json",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
