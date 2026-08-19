@@ -23,6 +23,9 @@ let lastIconState: IconState = 'idle';
 let blinkTimer: ReturnType<typeof setInterval> | null = null;
 let blinkOn = false;
 let broadcastTimer: ReturnType<typeof setTimeout> | null = null;
+let lingerTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingState: IconState | null = null;
+let pendingWaiting: Array<{ cwd: string; models: string[] }> = [];
 
 const TOOLTIPS: Record<IconState, string> = {
   running: 'llmusage — working',
@@ -63,22 +66,51 @@ function updateTrayIcon(snap: StoreSnapshot): void {
 
   const hasRunning = snap.sessions.active.some(s => s.state === 'running');
   const hasWaiting = snap.sessions.active.some(s => s.state === 'waiting-for-input');
-  let state: IconState = 'idle';
-  if (hasWaiting) state = 'waiting';
-  else if (hasRunning) state = 'running';
+  let desired: IconState = 'idle';
+  if (hasWaiting) desired = 'waiting';
+  else if (hasRunning) desired = 'running';
 
-  if (state !== lastIconState) {
-    // Completion sound: all running sessions just finished, now waiting for input
-    if (lastIconState === 'running' && state === 'waiting') {
-      playCompletionSound();
-      const waiting = snap.sessions.active.filter(s => s.state === 'waiting-for-input');
-      for (const s of waiting) {
-        showCompletionNotification(s);
-      }
-    }
-    lastIconState = state;
-    tray.setToolTip(TOOLTIPS[state]);
+  // If a linger is pending and we're going back to running, cancel it
+  if (lingerTimer && desired === 'running') {
+    clearTimeout(lingerTimer);
+    lingerTimer = null;
+    pendingState = null;
+    pendingWaiting = [];
   }
+
+  if (desired !== lastIconState) {
+    // Linger: delay running → waiting/idle by 4s to prevent flicker
+    if (lastIconState === 'running' && desired !== 'running') {
+      if (!lingerTimer) {
+        pendingState = desired;
+        pendingWaiting = snap.sessions.active.filter(s => s.state === 'waiting-for-input');
+        lingerTimer = setTimeout(() => {
+          lingerTimer = null;
+          applyTrayState(pendingState!);
+          if (pendingState === 'waiting') {
+            for (const s of pendingWaiting) showCompletionNotification(s);
+          }
+          pendingState = null;
+          pendingWaiting = [];
+        }, 4000);
+      }
+      return; // don't switch yet
+    }
+
+    applyTrayState(desired);
+  }
+
+  paintTray(lastIconState);
+}
+
+function applyTrayState(state: IconState): void {
+  const tray = mb?.tray;
+  if (!tray) return;
+  if (lastIconState === 'running' && state === 'waiting') {
+    playCompletionSound();
+  }
+  lastIconState = state;
+  tray.setToolTip(TOOLTIPS[state]);
 
   // Blink only while waiting; cancel otherwise
   if (state === 'waiting') {
