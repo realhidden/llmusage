@@ -121,13 +121,14 @@ function planCircle(label: string, w: QuotaWindow): string {
 function renderRollingDetail(snapshot: StoreSnapshot): string {
   const limits = snapshot.limits;
   const byDir = limits.byDir ?? [];
+  const plans = limits.plans ?? [];
   const showDirs = byDir.length > 1 || byDir.some(d => d.fiveHourTokens || d.weeklyTokens);
 
   const rows = showDirs
-    ? byDir.flatMap(d => dirRows(d))
+    ? byDir.flatMap(d => dirRows(d, plans.find(p => p.dir === d.path)?.plan ?? null))
     : [
-        rollingRow('5h',  limits.fiveHourUsed,  limits.fiveHourTokens),
-        rollingRow('7d',  limits.weeklyUsed,    limits.weeklyTokens),
+        rollingRow('5h',  limits.fiveHourUsed,  limits.fiveHourTokens, null),
+        rollingRow('7d',  limits.weeklyUsed,    limits.weeklyTokens, null),
       ];
 
   return `
@@ -137,29 +138,44 @@ function renderRollingDetail(snapshot: StoreSnapshot): string {
     </div>`;
 }
 
-function dirRows(d: DirLimits): string[] {
+function dirRows(d: DirLimits, plan: DirPlan['plan'] = null): string[] {
   return [
-    rollingRow(`${d.label} 5h`, d.fiveHourUsed, d.fiveHourTokens),
-    rollingRow(`${d.label} 7d`, d.weeklyUsed,   d.weeklyTokens),
+    rollingRow(`${d.label} 5h`, d.fiveHourUsed, d.fiveHourTokens, plan?.fiveHour?.resetsAt ?? null),
+    rollingRow(`${d.label} 7d`, d.weeklyUsed,   d.weeklyTokens,   plan?.sevenDay?.resetsAt ?? null),
   ];
 }
 
-function rollingRow(label: string, used: number, cap?: number): string {
+function rollingRow(label: string, used: number, cap?: number, resetsAt?: string | null): string {
+  const countdown = resetsAt ? formatCountdown(resetsAt) : null;
   if (cap) {
     const pct = Math.min((used / cap) * 100, 100);
     return `
       <div class="burn-card">
         <span class="burn-label">${escapeHtml(label)}</span>
         <span class="burn-value">${formatCompact(used)}</span>
-        <span class="burn-caption">${pct.toFixed(0)}% of ${formatCompact(cap)}</span>
+        <span class="burn-caption">${pct.toFixed(0)}% of ${formatCompact(cap)}${countdown ? ` · resets in ${countdown}` : ''}</span>
       </div>`;
   }
   return `
     <div class="burn-card">
       <span class="burn-label">${escapeHtml(label)}</span>
       <span class="burn-value">${formatCompact(used)}</span>
-      <span class="burn-caption">no cap</span>
+      <span class="burn-caption">${countdown ? `resets in ${countdown}` : 'no cap'}</span>
     </div>`;
+}
+
+function formatCountdown(iso: string): string | null {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const diffMs = d.getTime() - Date.now();
+  if (diffMs <= 0) return 'now';
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  if (hours < 24) return remMins > 0 ? `${hours}h ${remMins}m` : `${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ${hours % 24}h`;
 }
 
 function formatResetClock(iso: string): string {
