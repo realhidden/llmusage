@@ -3,13 +3,38 @@ import { Watcher } from '../claude/watcher.js';
 import { dirsFromConfig } from '../claude/dirs.js';
 import { loadConfig } from '../config.js';
 import { formatCompact } from '../../shared/time.js';
+import type { SessionState } from '../../shared/types.js';
+
+const args = process.argv.slice(2);
+const showResume = args.includes('--resume') || args.includes('--lately');
+
+function providerFor(filePath: string): string {
+  if (filePath.includes('.codex/sessions') || filePath.includes('.codex\\sessions')) return 'codex';
+  if (filePath.includes('.localqwen/projects') || filePath.includes('.localqwen\\projects')) return 'localqwen';
+  if (filePath.includes('.zcode/cli/rollout') || filePath.includes('.zcode\\cli\\rollout')) return 'zcode';
+  return 'claude';
+}
+
+function resumeCommand(session: SessionState): string {
+  const provider = providerFor(session.filePath);
+  const id = session.sessionId || 'unknown';
+  return `${provider} --resume ${id}`;
+}
+
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
 
 async function main(): Promise<void> {
   const config = await loadConfig();
   const dirs = dirsFromConfig(config).map(d => d.path);
-
-  console.log(`Scanning ${dirs.length} director${dirs.length === 1 ? 'y' : 'ies'}:`);
-  for (const d of dirs) console.log(`  ${d}`);
 
   const store = new Store();
   const watcher = new Watcher(store, {
@@ -22,6 +47,11 @@ async function main(): Promise<void> {
   await watcher.coldScan();
 
   const snap = store.snapshot();
+
+  if (showResume) {
+    printResume(snap.sessions.active, snap.sessions.recent);
+    return;
+  }
 
   console.log(`\n=== TODAY (${snap.generatedAt}) ===`);
   const t = snap.today.tokens;
@@ -65,6 +95,50 @@ async function main(): Promise<void> {
 
   console.log(`\nRolling 5h: ${formatCompact(snap.limits.fiveHourUsed)} tok`);
   console.log(`Rolling 7d: ${formatCompact(snap.limits.weeklyUsed)} tok`);
+}
+
+function printResume(active: SessionState[], recent: SessionState[]): void {
+  const all = [...active, ...recent];
+  if (all.length === 0) {
+    console.log('No sessions found.');
+    return;
+  }
+
+  // Group by cwd (project)
+  const byProject = new Map<string, SessionState[]>();
+  for (const s of all) {
+    const key = s.cwd || '/';
+    if (!byProject.has(key)) byProject.set(key, []);
+    byProject.get(key)!.push(s);
+  }
+
+  // Sort projects by most recent session
+  const projects = [...byProject.entries()].sort((a, b) => {
+    const lastA = a[1].reduce((m, s) => s.lastTs > m ? s.lastTs : m, '');
+    const lastB = b[1].reduce((m, s) => s.lastTs > m ? s.lastTs : m, '');
+    return lastB.localeCompare(lastA);
+  });
+
+  console.log(`\nWhat we've been up to:\n`);
+
+  for (const [project, sessions] of projects) {
+    const projName = project.split('/').filter(Boolean).pop() ?? project;
+    // Sort sessions within project by lastTs desc
+    sessions.sort((a, b) => b.lastTs.localeCompare(a.lastTs));
+
+    for (const s of sessions) {
+      const state = s.state === 'running' ? '● running' : s.state === 'waiting-for-input' ? '○ waiting' : '· done';
+      const cmd = resumeCommand(s);
+      const prompt = s.lastPrompt
+        ? `"${s.lastPrompt.slice(0, 70)}${s.lastPrompt.length > 70 ? '…' : ''}"`
+        : '(no prompt)';
+
+      console.log(`${projName}  ${state}  ${timeAgo(s.lastTs)}`);
+      console.log(`  last: ${prompt}`);
+      console.log(`  $ ${cmd}`);
+      console.log('');
+    }
+  }
 }
 
 main().catch((err) => {

@@ -1,7 +1,8 @@
-import { app, ipcMain, shell, Menu } from 'electron';
+import { app, ipcMain, shell, Menu, Notification } from 'electron';
 import { menubar } from 'menubar';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFile } from 'node:child_process';
 import { Store } from './claude/store.js';
 import { Watcher } from './claude/watcher.js';
 import { dirsFromConfig } from './claude/dirs.js';
@@ -29,6 +30,12 @@ const TOOLTIPS: Record<IconState, string> = {
   idle: 'llmusage — idle',
 };
 
+function playCompletionSound(): void {
+  execFile('afplay', ['/System/Library/Sounds/Glass.aiff'], (err) => {
+    if (err) console.error('[llmusage] completion sound failed:', err);
+  });
+}
+
 function paintTray(state: IconState): void {
   const tray = mb?.tray;
   if (!tray) return;
@@ -48,6 +55,10 @@ function updateTrayIcon(snap: StoreSnapshot): void {
   else if (hasRunning) state = 'running';
 
   if (state !== lastIconState) {
+    // Completion sound: all running sessions just finished, now waiting for input
+    if (lastIconState === 'running' && state === 'waiting') {
+      playCompletionSound();
+    }
     lastIconState = state;
     tray.setToolTip(TOOLTIPS[state]);
   }
@@ -246,6 +257,9 @@ app.whenReady().then(async () => {
     'app:quit': async () => app.quit(),
     'app:version': async () => app.getVersion(),
   });
+}).catch((err) => {
+  console.error('[llmusage] Fatal startup error:', err);
+  app.quit();
 });
 
 app.on('window-all-closed', () => {

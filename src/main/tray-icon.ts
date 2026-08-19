@@ -1,4 +1,4 @@
-import { BrowserWindow, nativeImage } from 'electron';
+import { BrowserWindow, nativeImage, NativeImage } from 'electron';
 
 export type IconState = 'idle' | 'running' | 'waiting';
 
@@ -26,9 +26,17 @@ const STATE_CONFIG: Record<IconState, { path: string; fill: string }> = {
   waiting: { path: BRAIN_LIGHTNING_PATH, fill: '#000000' },
 };
 
+// 1×1 transparent PNG — ultimate fallback if all rasterization fails
+const FALLBACK_PNG =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+
+function fallbackIcon(): NativeImage {
+  return nativeImage.createFromDataURL(FALLBACK_PNG).resize({ width: SIZE, height: SIZE });
+}
+
 const cache = new Map<string, Electron.NativeImage>();
 
-async function rasterize(svg: string): Promise<Electron.NativeImage> {
+async function rasterize(svg: string): Promise<NativeImage> {
   const win = new BrowserWindow({
     width: SIZE * SCALE,
     height: SIZE * SCALE,
@@ -42,7 +50,6 @@ async function rasterize(svg: string): Promise<Electron.NativeImage> {
   try {
     const html = `<!doctype html><html><head><style>html,body{margin:0;padding:0;background:transparent;width:100%;height:100%}body{display:flex;align-items:center;justify-content:center}</style></head><body>${svg}</body></html>`;
     await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
-    // capturePage returns a NativeImage at the renderer's pixel size
     const img = await win.webContents.capturePage();
     return img.resize({ width: SIZE, height: SIZE, quality: 'best' });
   } finally {
@@ -53,23 +60,34 @@ async function rasterize(svg: string): Promise<Electron.NativeImage> {
 export async function initIcons(): Promise<void> {
   for (const state of Object.keys(STATE_CONFIG) as IconState[]) {
     const { path, fill } = STATE_CONFIG[state];
-    const img = await rasterize(svgFor(path, fill));
-    if (state === 'idle') img.setTemplateImage(true);
-    cache.set(`${state}:1`, img);
+    try {
+      const img = await rasterize(svgFor(path, fill));
+      if (state === 'idle') img.setTemplateImage(true);
+      cache.set(`${state}:1`, img);
 
-    if (state === 'waiting') {
-      const dimImg = await rasterize(svgFor(path, 'rgba(0,0,0,0.35)'));
-      cache.set(`${state}:0.4`, dimImg);
+      if (state === 'waiting') {
+        const dimImg = await rasterize(svgFor(path, 'rgba(0,0,0,0.35)'));
+        cache.set(`${state}:0.4`, dimImg);
+      }
+    } catch (err) {
+      console.error(`[tray-icon] Failed to rasterize ${state} icon:`, err);
+      const fb = fallbackIcon();
+      if (state === 'idle') fb.setTemplateImage(true);
+      cache.set(`${state}:1`, fb);
+      if (state === 'waiting') {
+        const dimFb = fallbackIcon();
+        dimFb.setTemplateImage(true);
+        cache.set(`${state}:0.4`, dimFb);
+      }
     }
   }
 }
 
-export function getIcon(state: IconState, dim: number = 1): Electron.NativeImage {
+export function getIcon(state: IconState, dim: number = 1): NativeImage {
   const key = `${state}:${dim < 1 ? '0.4' : '1'}`;
   const img = cache.get(key) ?? cache.get(`${state}:1`);
   if (!img) {
-    // Should never happen post-initIcons; return an empty image as a safe fallback
-    return nativeImage.createEmpty();
+    return fallbackIcon();
   }
   return img;
 }
