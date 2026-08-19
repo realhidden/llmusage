@@ -186,6 +186,39 @@ async function sendSnapshot(): Promise<void> {
     win.webContents.send('store:update', snap);
   }
   updateTrayIcon(snap);
+  checkThresholdAlerts(snap);
+}
+
+const THRESHOLDS = [75, 95] as const;
+const firedThresholds = new Set<string>();
+
+function checkThresholdAlerts(snap: StoreSnapshot): void {
+  const byDir = snap.limits.byDir ?? [];
+  for (const d of byDir) {
+    const checks: Array<{ label: string; used: number; cap?: number }> = [
+      { label: `${d.label} 5h`, used: d.fiveHourUsed, cap: d.fiveHourTokens },
+      { label: `${d.label} 7d`, used: d.weeklyUsed, cap: d.weeklyTokens },
+    ];
+    for (const c of checks) {
+      if (!c.cap) continue;
+      const pct = (c.used / c.cap) * 100;
+      for (const t of THRESHOLDS) {
+        const key = `${d.path}|${c.label}|${t}`;
+        if (pct >= t) {
+          if (!firedThresholds.has(key)) {
+            firedThresholds.add(key);
+            const n = new Notification({
+              title: `llmusage: ${t}% threshold`,
+              body: `${c.label} at ${pct.toFixed(0)}% (${c.used.toLocaleString()} / ${c.cap.toLocaleString()} tok)`,
+            });
+            n.show();
+          }
+        } else {
+          firedThresholds.delete(key);
+        }
+      }
+    }
+  }
 }
 
 async function reloadData(config: Config): Promise<void> {
