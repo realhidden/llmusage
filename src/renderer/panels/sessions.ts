@@ -1,6 +1,7 @@
 import type { StoreSnapshot, SessionState } from '../../shared/types.js';
 import { resolveProjectCwd } from '../../shared/paths.js';
 import { formatCompact, bucketTotal, timeAgo, modelColor, modelShort } from '../components/token-bar.js';
+import { costOfModels, formatCost } from '../../shared/pricing.js';
 
 let expandedSessionId: string | null = null;
 let expandedProject: string | null = null;
@@ -203,6 +204,9 @@ function renderSessionRow(s: SessionState): string {
     ? `<span class="ctx-label">${formatCompact(s.contextTokens)}/${formatCompact(ctxLimit)} ctx</span>`
     : '';
 
+  const cost = costOfModels(s.byModel);
+  const costStr = cost > 0 ? ` · ${formatCost(cost)}` : '';
+
   let html = `<div class="session-row compact" data-session-id="${s.sessionId}">
     <div class="session-header">
       <span class="session-dot ${s.state}"></span>
@@ -210,7 +214,7 @@ function renderSessionRow(s: SessionState): string {
       <span class="session-branch">${escapeHtml(s.gitBranch || '—')}</span>
       <span class="session-badge ${s.state}">${stateLabel}</span>
     </div>
-    <div class="session-meta">${modelChips}<span class="session-meta-stat">${s.assistantTurns} turns · ${formatCompact(total)} tok</span></div>
+    <div class="session-meta">${modelChips}<span class="session-meta-stat">${s.assistantTurns} turns · ${formatCompact(total)} tok${costStr}</span></div>
     ${ctxBar ? `<div class="session-ctx">${ctxLabel}${ctxBar}</div>` : ''}`;
 
   if (s.lastPrompt) {

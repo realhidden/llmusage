@@ -4,6 +4,7 @@ import { renderWeek } from './panels/week.js';
 import { renderSessions } from './panels/sessions.js';
 import { toggleSettings } from './panels/settings.js';
 import { formatCompact, bucketTotal } from './components/token-bar.js';
+import { costOfModels, formatCost } from '../shared/pricing.js';
 
 let lastSnapshot: StoreSnapshot | null = null;
 
@@ -70,7 +71,10 @@ function checkForUpdates(): void {
 
 function updateHeader(snap: StoreSnapshot): void {
   const total = bucketTotal(snap.today.tokens);
-  headerToday.textContent = `today: ${formatCompact(total)} tok`;
+  const cost = costOfModels(snap.today.byModel);
+  headerToday.textContent = cost > 0
+    ? `today: ${formatCompact(total)} tok · ${formatCost(cost)}`
+    : `today: ${formatCompact(total)} tok`;
 
   const waiting = snap.sessions.active.filter(s => s.state === 'waiting-for-input').length;
   if (waiting > 0) {
