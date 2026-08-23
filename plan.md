@@ -18,6 +18,7 @@
 - [x] Feature 8 — Charts in popover: already present (v0.2.0 USAGE stacked-bar panel); skipped
 - [x] Feature 9 — Real Claude rate limits: live OAuth fetch already present; added file-based estimate fallback
 - [x] Feature 10 — `scan --json` CLI output (+ `scan:json` npm script)
+- [x] Feature 11 — Per-dir cost toggle (settings checkbox; metadata-only edits skip rescan)
 
 ---
 

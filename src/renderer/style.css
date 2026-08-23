@@ -1098,6 +1098,21 @@ body {
   color: var(--red);
 }
 
+.settings-dir-cost {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.settings-dir-cost input {
+  margin: 0;
+  accent-color: var(--fg-accent);
+}
+
 .settings-add-dir {
   display: flex;
   gap: 6px;

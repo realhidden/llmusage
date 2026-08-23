@@ -15,6 +15,8 @@ export type UsageBucket = {
 export type SessionState = {
   sessionId: string;
   filePath: string;
+  /** Normalized data-directory path this session belongs to ('' if unknown). */
+  dir: string;
   cwd: string;
   gitBranch: string;
   firstTs: string;
@@ -28,6 +30,8 @@ export type SessionState = {
   state: 'running' | 'waiting-for-input' | 'idle' | 'done';
   assistantTurns: number;
   contextTokens: number;
+  /** Estimated cost in USD, or null when cost is disabled for this session's dir. */
+  cost: number | null;
 };
 
 export type DirLimits = {
@@ -62,6 +66,8 @@ export type DirPlan = {
 export type StoreSnapshot = {
   generatedAt: string;
   today: UsageBucket;
+  /** Estimated cost for today across cost-enabled dirs; null when none are enabled. */
+  todayCost: number | null;
   last7Days: Array<{ day: string; bucket: UsageBucket }>;
   usageRanges: {
     last7Days: Array<{ day: string; bucket: UsageBucket }>;
@@ -85,7 +91,7 @@ export type StoreSnapshot = {
 
 export type DataDirEntry =
   | string
-  | { path: string; label?: string; fiveHourTokens?: number; weeklyTokens?: number };
+  | { path: string; label?: string; fiveHourTokens?: number; weeklyTokens?: number; estimateCost?: boolean };
 
 export type Config = {
   plan?: string;

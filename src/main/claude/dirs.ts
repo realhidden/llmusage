@@ -7,6 +7,7 @@ export type NormalizedDir = {
   label: string;
   fiveHourTokens?: number;
   weeklyTokens?: number;
+  estimateCost?: boolean;
 };
 
 function expandTilde(p: string): string {
@@ -40,6 +41,7 @@ export function normalizeDir(entry: DataDirEntry): NormalizedDir {
     label: entry.label ?? defaultLabel(path),
     fiveHourTokens: entry.fiveHourTokens,
     weeklyTokens: entry.weeklyTokens,
+    estimateCost: entry.estimateCost,
   };
 }
 

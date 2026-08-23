@@ -1,7 +1,7 @@
 import type { StoreSnapshot, SessionState } from '../../shared/types.js';
 import { resolveProjectCwd } from '../../shared/paths.js';
 import { formatCompact, bucketTotal, timeAgo, modelColor, modelShort } from '../components/token-bar.js';
-import { costOfModels, formatCost } from '../../shared/pricing.js';
+import { formatCost } from '../../shared/pricing.js';
 
 let expandedSessionId: string | null = null;
 let expandedProject: string | null = null;
@@ -204,8 +204,7 @@ function renderSessionRow(s: SessionState): string {
     ? `<span class="ctx-label">${formatCompact(s.contextTokens)}/${formatCompact(ctxLimit)} ctx</span>`
     : '';
 
-  const cost = costOfModels(s.byModel);
-  const costStr = cost > 0 ? ` · ${formatCost(cost)}` : '';
+  const costStr = s.cost != null && s.cost > 0 ? ` · ${formatCost(s.cost)}` : '';
 
   let html = `<div class="session-row compact" data-session-id="${s.sessionId}">
     <div class="session-header">

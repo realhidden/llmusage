@@ -11,7 +11,9 @@ import { registerIPC } from './ipc.js';
 import { getIcon, initIcons, type IconState } from './tray-icon.js';
 import { getQuotaForDir } from './quota.js';
 import { checkForUpdate, isGitHubReleaseUrl } from './update.js';
-import type { StoreSnapshot, Config, DirLimits, DirPlan, PlanQuota } from '../shared/types.js';
+import { costOfModels } from '../shared/pricing.js';
+import { todayKey } from '../shared/time.js';
+import type { StoreSnapshot, Config, DirLimits, DirPlan, PlanQuota, DataDirEntry } from '../shared/types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isDev = process.env.NODE_ENV === 'development';
@@ -149,6 +151,28 @@ async function decorateSnapshot(snap: StoreSnapshot, config: Config): Promise<St
   }));
   snap.limits.byDir = byDir;
 
+  // Per-dir "estimate cost" toggle: omitted defaults to ON; explicit false hides
+  // the $ figures for that dir. Cost is computed here (main process) because it
+  // knows each dir's setting and per-dir tokens — the renderer just displays.
+  const costEnabledFor = (dirPath: string): boolean => {
+    const d = dirs.find(x => x.path === dirPath);
+    return d ? d.estimateCost !== false : true;
+  };
+
+  const todayModels = store.dayModelByDir(todayKey());
+  let todayCost = 0;
+  let anyCostEnabled = false;
+  for (const d of dirs) {
+    if (d.estimateCost === false) continue;
+    anyCostEnabled = true;
+    todayCost += costOfModels(todayModels.get(d.path) ?? {});
+  }
+  snap.todayCost = anyCostEnabled ? todayCost : null;
+
+  for (const s of [...snap.sessions.active, ...snap.sessions.recent]) {
+    s.cost = costEnabledFor(s.dir) ? costOfModels(s.byModel) : null;
+  }
+
   // Fan out per-dir quota fetches in parallel; quota module handles
   // per-provider routing and 60s caching. Codex gets rate limits from
   // session events via the store instead of an API call.
@@ -210,6 +234,11 @@ async function sendSnapshot(): Promise<void> {
   }
   updateTrayIcon(snap);
   checkThresholdAlerts(snap);
+}
+
+/** Stable key over the set of normalized dir paths (ignores labels/limits/cost). */
+function dirSetKey(config: Config): string {
+  return dirsFromConfig(config).map(d => d.path).sort().join('\n');
 }
 
 const THRESHOLDS = [75, 95] as const;
@@ -339,8 +368,14 @@ app.whenReady().then(async () => {
     'config:get': async () => loadConfig(),
     'config:set': async (_event, args) => {
       const partial = args as Partial<Config>;
+      const prevConfig = await loadConfig();
       const config = await saveConfig(partial);
-      if (Object.prototype.hasOwnProperty.call(partial, 'dataDirs')) {
+      // Full rescan only when the SET of normalized dir paths changed (add/remove/
+      // reorder). Metadata-only edits (labels, limits, per-dir cost) just repaint.
+      const dirsChanged =
+        Object.prototype.hasOwnProperty.call(partial, 'dataDirs') &&
+        dirSetKey(prevConfig) !== dirSetKey(config);
+      if (dirsChanged) {
         await reloadData(config);
       } else {
         await sendSnapshot();

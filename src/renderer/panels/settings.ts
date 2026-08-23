@@ -53,10 +53,12 @@ export function renderSettings(container: HTMLElement, config: Config): void {
   dirList.innerHTML = dirs.map((dir, i) => {
     const path = typeof dir === 'string' ? dir : dir.path;
     const label = typeof dir === 'string' ? defaultLabel(path) : (dir.label ?? defaultLabel(path));
+    const costOn = typeof dir === 'string' ? true : dir.estimateCost !== false;
     return `
     <div class="settings-dir-row">
       <span class="settings-dir-label">${escapeHtml(label)}</span>
       <span class="settings-dir-path">${escapeHtml(path)}</span>
+      <label class="settings-dir-cost" title="Show estimated cost ($) for this directory"><input type="checkbox" data-index="${i}" ${costOn ? 'checked' : ''} /> cost</label>
       <button class="settings-dir-remove" data-index="${i}">&times;</button>
     </div>
   `;
@@ -107,6 +109,24 @@ export function renderSettings(container: HTMLElement, config: Config): void {
       const current = await window.api.invoke('config:get');
       const dirs = [...(current.dataDirs ?? [])];
       dirs.splice(idx, 1);
+      const freshConfig = await window.api.invoke('config:set', { dataDirs: dirs });
+      window.__llmusageConfig = freshConfig;
+      renderSettings(container, freshConfig);
+    });
+  });
+
+  // Bind per-dir cost toggle (metadata-only — main skips the full rescan)
+  dirList.querySelectorAll('.settings-dir-cost input').forEach(chk => {
+    chk.addEventListener('change', async () => {
+      const idx = parseInt((chk as HTMLInputElement).dataset.index ?? '0');
+      const current = await window.api.invoke('config:get');
+      const dirs = [...(current.dataDirs ?? [])];
+      const entry = dirs[idx];
+      if (entry === undefined) return;
+      const obj: Extract<DataDirEntry, { path: string }> =
+        typeof entry === 'string' ? { path: entry } : { ...entry };
+      obj.estimateCost = (chk as HTMLInputElement).checked;
+      dirs[idx] = obj;
       const freshConfig = await window.api.invoke('config:set', { dataDirs: dirs });
       window.__llmusageConfig = freshConfig;
       renderSettings(container, freshConfig);

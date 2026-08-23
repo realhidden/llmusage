@@ -71,6 +71,8 @@ export type SessionFileState = {
 
 export class Store {
   private byDay = new Map<string, UsageBucket>();
+  // Per-day, per-dir model token buckets (for per-dir cost estimation)
+  private byDayByDir = new Map<string, Map<string, Record<string, TokenBucket>>>();
   private bySession = new Map<string, SessionFileState>();
   private byFile = new Map<string, StoredFile>();
   // Sorted by timestamp for rolling-window queries
@@ -191,6 +193,24 @@ export class Store {
         }
         addBucket(dayModel, tk);
 
+        // Per-dir day aggregation (lets the main process compute cost gated per dir)
+        let dayDirModels = this.byDayByDir.get(day);
+        if (!dayDirModels) {
+          dayDirModels = new Map();
+          this.byDayByDir.set(day, dayDirModels);
+        }
+        let dirModels = dayDirModels.get(dir);
+        if (!dirModels) {
+          dirModels = {};
+          dayDirModels.set(dir, dirModels);
+        }
+        let dirModelBucket = dirModels[model];
+        if (!dirModelBucket) {
+          dirModelBucket = emptyBucket();
+          dirModels[model] = dirModelBucket;
+        }
+        addBucket(dirModelBucket, tk);
+
         if (ev.cwd) {
           const projectCwd = resolveProjectCwd(ev.cwd);
           let dayProject = dayBucket.byProject[projectCwd];
@@ -212,6 +232,7 @@ export class Store {
 
   reset(): void {
     this.byDay.clear();
+    this.byDayByDir.clear();
     this.bySession.clear();
     this.byFile.clear();
     this.tokenEvents = [];
@@ -221,11 +242,17 @@ export class Store {
   private rebuildAggregates(): void {
     const files = [...this.byFile.entries()];
     this.byDay.clear();
+    this.byDayByDir.clear();
     this.bySession.clear();
     this.tokenEvents = [];
     for (const [filePath, file] of files) {
       this.ingestIntoAggregates(filePath, file.events, file.dir);
     }
+  }
+
+  /** Model token buckets for a day, keyed by data-directory path. */
+  dayModelByDir(day: string): Map<string, Record<string, TokenBucket>> {
+    return this.byDayByDir.get(day) ?? new Map();
   }
 
   private rollingWindowTotal(msAgo: number, dir?: string): number {
@@ -278,6 +305,7 @@ export class Store {
       sessionStates.push({
         sessionId: s.sessionId,
         filePath: s.filePath,
+        dir: this.byFile.get(s.filePath)?.dir ?? '',
         cwd: s.cwd,
         gitBranch: s.gitBranch,
         firstTs: s.firstTs,
@@ -291,6 +319,7 @@ export class Store {
         state,
         assistantTurns: s.assistantTurns,
         contextTokens: s.lastContextTokens,
+        cost: null,
       });
     }
 
@@ -309,6 +338,7 @@ export class Store {
     return {
       generatedAt: nowISO,
       today: todayBucket,
+      todayCost: null,
       last7Days: last7,
       usageRanges: {
         last7Days: last7,
