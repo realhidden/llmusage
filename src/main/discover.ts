@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { readdir, stat } from 'node:fs/promises';
-import type { DiscoveredDir } from '../../shared/types.js';
+import type { DiscoveredDir } from '../shared/types.js';
 
 /** Dot-dirs that are never agent data — skip without stat-ing. */
 const SKIP = new Set([
