@@ -1,12 +1,21 @@
-import type { Config, DataDirEntry } from '../../shared/types.js';
+import type { Config, DataDirEntry, DiscoveredDir, StoreSnapshot } from '../../shared/types.js';
+import { effectivePrice } from '../../shared/pricing.js';
+import { modelShort } from '../components/token-bar.js';
 
 let visible = false;
+
+const PRICE_FIELDS = [
+  { key: 'input', label: 'in' },
+  { key: 'output', label: 'out' },
+  { key: 'cacheRead', label: 'cache↓' },
+  { key: 'cacheWrite', label: 'cache↑' },
+] as const;
 
 export function isSettingsVisible(): boolean {
   return visible;
 }
 
-export function renderSettings(container: HTMLElement, config: Config): void {
+export async function renderSettings(container: HTMLElement, config: Config): Promise<void> {
   const existing = document.getElementById('settings-panel');
   if (existing) {
     existing.remove();
@@ -23,10 +32,20 @@ export function renderSettings(container: HTMLElement, config: Config): void {
       <div class="settings-section">
         <div class="settings-section-label">Data Directories</div>
         <div id="dir-list"></div>
+        <div id="discovered-list"></div>
         <div class="settings-add-dir">
           <input type="text" id="dir-label-input" placeholder="label" />
           <input type="text" id="dir-input" placeholder="/path/to/projects" />
           <button id="dir-add-btn">Add</button>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-label">Pricing ($/M tokens)</div>
+        <div id="price-list"></div>
+        <div class="settings-add-dir">
+          <input type="text" id="price-model-input" placeholder="model-id" />
+          <button id="price-add-btn">Add</button>
         </div>
       </div>
 
@@ -133,11 +152,96 @@ export function renderSettings(container: HTMLElement, config: Config): void {
     });
   });
 
+  // Discovered-but-unconfigured agent data dirs (one-click add)
+  const discoveredList = panel.querySelector('#discovered-list') as HTMLElement;
+  window.api.invoke('discover:dirs').then((candidates: DiscoveredDir[]) => {
+    if (!candidates.length || !visible) {
+      discoveredList.innerHTML = '';
+      return;
+    }
+    discoveredList.innerHTML = candidates.map(c => `
+      <div class="settings-dir-row discovered">
+        <span class="settings-dir-label">${escapeHtml(defaultLabel(c.path))}</span>
+        <span class="settings-dir-path">${escapeHtml(c.path)}</span>
+        <button class="settings-discover-add" data-path="${escapeAttr(c.path)}">add</button>
+      </div>
+    `).join('');
+    discoveredList.querySelectorAll('.settings-discover-add').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const path = (btn as HTMLElement).dataset.path ?? '';
+        const current = await window.api.invoke('config:get');
+        const dirs = [...(current.dataDirs ?? []), { path }];
+        const freshConfig = await window.api.invoke('config:set', { dataDirs: dirs });
+        window.__llmusageConfig = freshConfig;
+        renderSettings(container, freshConfig);
+      });
+    });
+  });
+
+  // Pricing editor — models seen in data plus any existing overrides
+  const priceList = panel.querySelector('#price-list') as HTMLElement;
+  const models = new Set<string>(Object.keys(config.priceOverrides ?? {}));
+  try {
+    const snap = await window.api.invoke('store:snapshot') as StoreSnapshot;
+    for (const m of Object.keys(snap.today.byModel)) models.add(m);
+    for (const s of [...snap.sessions.active, ...snap.sessions.recent]) {
+      for (const m of Object.keys(s.byModel)) models.add(m);
+    }
+  } catch { /* pricing list stays with override keys only */ }
+  const sortedModels = [...models].sort();
+  priceList.innerHTML = sortedModels.map(m => `
+    <div class="settings-price-row">
+      <span class="settings-price-model" title="${escapeAttr(m)}">${escapeHtml(modelShort(m))}</span>
+      ${PRICE_FIELDS.map(f => {
+        const effective = effectivePrice(m, config.priceOverrides)[f.key];
+        const overridden = config.priceOverrides?.[m]?.[f.key];
+        return `<label class="settings-price-field" title="$${f.label}/Mtok — built-in ${effective}">
+          <input type="number" min="0" step="0.01" inputmode="decimal"
+            data-model="${escapeAttr(m)}" data-field="${f.key}"
+            value="${overridden ?? ''}" placeholder="${effective}" />${f.label}</label>`;
+      }).join('')}
+    </div>
+  `).join('');
+  priceList.querySelectorAll('.settings-price-row input').forEach(inp => {
+    inp.addEventListener('change', async () => {
+      const el = inp as HTMLInputElement;
+      savePriceOverride(el.dataset.model ?? '', el.dataset.field ?? '', el.value);
+    });
+  });
+
+  const priceAddInput = panel.querySelector('#price-model-input') as HTMLInputElement;
+  panel.querySelector('#price-add-btn')!.addEventListener('click', async () => {
+    const model = priceAddInput.value.trim();
+    if (!model) return;
+    const current = await window.api.invoke('config:get');
+    const overrides = { ...(current.priceOverrides ?? {}), [model]: {} };
+    const freshConfig = await window.api.invoke('config:set', { priceOverrides: overrides });
+    window.__llmusageConfig = freshConfig;
+    renderSettings(container, freshConfig);
+  });
+
   // Populate version link
   window.api.invoke('app:version').then((v: string) => {
     const link = panel.querySelector('.settings-version-link') as HTMLAnchorElement;
     if (link) link.textContent = `v${v}`;
   });
+}
+
+async function savePriceOverride(model: string, field: string, raw: string): Promise<void> {
+  if (!model || !field) return;
+  const current: Config = await window.api.invoke('config:get');
+  const overrides: NonNullable<Config['priceOverrides']> = { ...(current.priceOverrides ?? {}) };
+  const entry = { ...overrides[model] };
+  const num = parseFloat(raw);
+  if (raw.trim() === '' || Number.isNaN(num) || num < 0) {
+    delete (entry as Record<string, number | undefined>)[field];
+  } else {
+    (entry as Record<string, number | undefined>)[field] = num;
+  }
+  if (Object.keys(entry).length === 0) delete overrides[model];
+  else overrides[model] = entry;
+  const freshConfig = await window.api.invoke('config:set', { priceOverrides: overrides });
+  window.__llmusageConfig = freshConfig;
 }
 
 export function toggleSettings(container: HTMLElement): void {
@@ -156,6 +260,10 @@ export function toggleSettings(container: HTMLElement): void {
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function escapeAttr(s: string): string {
+  return escapeHtml(s).replace(/'/g, '&#39;');
 }
 
 function defaultLabel(path: string): string {

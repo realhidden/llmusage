@@ -1,34 +1,71 @@
 import type { TokenBucket } from '../../shared/types.js';
 
-const MODEL_COLORS: Record<string, string> = {
-  'claude-opus-4-7': '#89b4fa',
-  'claude-sonnet-4-6': '#a6e3a1',
-  'claude-haiku-4-5': '#f9e2af',
-  'claude-haiku-4-5-20251001': '#f9e2af',
-  'glm-5.1': '#f38ba8',
-  'glm-5-turbo': '#fab387',
-  'glm-4.5-air': '#94e2d5',
-  'hidden/coder-opus': '#74c7ec',
-  'qwen-coder': '#74c7ec',
-};
+/**
+ * Diverse palette tuned for the dark theme. Curated anchors keep the most
+ * common model families at fixed, maximally distinct hues; anything else is
+ * assigned deterministically from the same palette via an FNV-1a hash, so
+ * unknown models no longer collapse into one shared color.
+ */
+const PALETTE = [
+  '#f38ba8', // red
+  '#fab387', // peach
+  '#f9e2af', // yellow
+  '#a6e3a1', // green
+  '#94e2d5', // teal
+  '#89b4fa', // blue
+  '#cba6f7', // mauve
+  '#f5c2e7', // pink
+  '#89dceb', // sky
+  '#eba0ac', // maroon
+  '#74c7ec', // sapphire
+  '#b4befe', // lavender
+] as const;
+
+const CURATED: Array<{ match: RegExp; color: string }> = [
+  { match: /opus/i,        color: '#89b4fa' }, // blue
+  { match: /sonnet/i,      color: '#a6e3a1' }, // green
+  { match: /haiku/i,       color: '#f9e2af' }, // yellow
+  { match: /glm-5\.3/i,    color: '#f5c2e7' }, // pink
+  { match: /glm-5\.1/i,    color: '#f38ba8' }, // red
+  { match: /glm-5-turbo/i, color: '#fab387' }, // peach
+  { match: /glm/i,         color: '#89dceb' }, // sky (other glm lines)
+  { match: /qwen/i,        color: '#74c7ec' }, // sapphire
+  { match: /\bgpt|codex|\bo[13]\b/i, color: '#94e2d5' }, // teal
+];
+
+const colorCache = new Map<string, string>();
 
 export function modelColor(model: string): string {
-  return MODEL_COLORS[model] ?? '#cba6f7';
+  const cached = colorCache.get(model);
+  if (cached) return cached;
+  let color: string | undefined;
+  for (const rule of CURATED) {
+    if (rule.match.test(model)) {
+      color = rule.color;
+      break;
+    }
+  }
+  color ??= PALETTE[fnv1a(model) % PALETTE.length]!;
+  colorCache.set(model, color);
+  return color;
+}
+
+function fnv1a(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
 }
 
 export function modelShort(model: string): string {
-  const map: Record<string, string> = {
-    'claude-opus-4-7': 'opus',
-    'claude-sonnet-4-6': 'sonnet',
-    'claude-haiku-4-5': 'haiku',
-    'claude-haiku-4-5-20251001': 'haiku',
-    'glm-5.1': 'glm-5.1',
-    'glm-5-turbo': 'glm-5t',
-    'glm-4.5-air': 'glm-4.5',
-    'hidden/coder-opus': 'qwen',
-    'qwen-coder': 'qwen',
-  };
-  return map[model] ?? model.replace('claude-', '').replace('-20251001', '');
+  return model
+    .replace(/^claude-/, '')
+    .replace(/^hidden\//, '')
+    .replace(/-202\d{5}$/, '')
+    .replace(/^GLM-/i, 'glm-')
+    .toLowerCase();
 }
 
 export function formatCompact(n: number): string {
@@ -52,6 +89,5 @@ export function timeAgo(isoTs: string): string {
   if (mins < 60) return `${mins}m ago`;
   const hours = Math.floor(mins / 60);
   if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  return `${Math.floor(hours / 24)}d ago`;
 }

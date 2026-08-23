@@ -19,6 +19,9 @@
 - [x] Feature 9 — Real Claude rate limits: live OAuth fetch already present; added file-based estimate fallback
 - [x] Feature 10 — `scan --json` CLI output (+ `scan:json` npm script)
 - [x] Feature 11 — Per-dir cost toggle (settings checkbox; metadata-only edits skip rescan)
+- [x] Feature 12 — User-set pricing: per-model $/M overrides in settings
+- [x] Feature 13 — Dot-dir auto-discovery: settings suggests unconfigured agent-data dirs (~/.x/projects|sessions|cli/rollout)
+- [x] Feature 14 — Diverse model color palette (curated family anchors + deterministic hash fallback)
 
 ---
 

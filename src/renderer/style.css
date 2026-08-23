@@ -1113,6 +1113,85 @@ body {
   accent-color: var(--fg-accent);
 }
 
+.settings-dir-row.discovered .settings-dir-label {
+  color: var(--fg-dim);
+  font-style: italic;
+}
+
+.settings-discover-add {
+  background: none;
+  border: 1px solid var(--fg-accent);
+  border-radius: 4px;
+  color: var(--fg-accent);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.settings-discover-add:hover {
+  background: var(--fg-accent);
+  color: var(--bg);
+}
+
+.settings-price-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.06);
+}
+
+.settings-price-model {
+  flex: 0 0 84px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--fg-accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-price-field {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 9px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+  cursor: text;
+}
+
+.settings-price-field input {
+  width: 44px;
+  background: var(--bg-panel);
+  border: 1px solid rgba(128, 128, 128, 0.2);
+  border-radius: 3px;
+  color: var(--fg);
+  font-size: 10px;
+  font-family: monospace;
+  padding: 2px 4px;
+  outline: none;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.settings-price-field input::-webkit-inner-spin-button,
+.settings-price-field input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.settings-price-field input:focus {
+  border-color: var(--fg-accent);
+}
+
+.settings-price-field input:not(:placeholder-shown) {
+  color: var(--fg-accent);
+  border-color: var(--fg-accent);
+}
+
 .settings-add-dir {
   display: flex;
   gap: 6px;

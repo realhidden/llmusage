@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { priceForModel, costOf, costOfModels, formatCost } from './pricing.js';
+import { priceForModel, effectivePrice, costOf, costOfModels, formatCost } from './pricing.js';
 
 describe('pricing', () => {
   it('matches model prices by family', () => {
@@ -34,5 +34,23 @@ describe('pricing', () => {
     expect(formatCost(0.004)).toBe('<$0.01');
     expect(formatCost(0.42)).toBe('$0.42');
     expect(formatCost(123.4)).toBe('$123');
+  });
+
+  it('applies per-field user overrides over the built-in table', () => {
+    const overrides = { 'claude-sonnet-4-6': { output: 1 } };
+    // overridden field
+    expect(effectivePrice('claude-sonnet-4-6', overrides).output).toBe(1);
+    // non-overridden fields inherit the family price
+    expect(effectivePrice('claude-sonnet-4-6', overrides).input).toBe(3);
+    // no override -> built-in
+    expect(effectivePrice('gpt-4o', overrides).input).toBe(2.5);
+    // override on unknown model works without a family entry
+    expect(effectivePrice('my-model', { 'my-model': { input: 9 } }).input).toBe(9);
+  });
+
+  it('computes cost through overrides', () => {
+    const tokens = { input: 0, output: 1_000_000, cacheRead: 0, cacheCreate: 0 };
+    expect(costOf('claude-sonnet-4-6', tokens, { 'claude-sonnet-4-6': { output: 5 } })).toBe(5);
+    expect(costOfModels({ 'claude-sonnet-4-6': tokens }, { 'claude-sonnet-4-6': { output: 2 } })).toBe(2);
   });
 });

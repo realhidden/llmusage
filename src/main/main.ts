@@ -5,7 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { Store } from './claude/store.js';
 import { Watcher } from './claude/watcher.js';
-import { dirsFromConfig } from './claude/dirs.js';
+import { dirsFromConfig, normalizeDir } from './claude/dirs.js';
+import { discoverAgentDirs } from './discover.js';
 import { loadConfig, saveConfig } from './config.js';
 import { registerIPC } from './ipc.js';
 import { getIcon, initIcons, type IconState } from './tray-icon.js';
@@ -165,12 +166,12 @@ async function decorateSnapshot(snap: StoreSnapshot, config: Config): Promise<St
   for (const d of dirs) {
     if (d.estimateCost === false) continue;
     anyCostEnabled = true;
-    todayCost += costOfModels(todayModels.get(d.path) ?? {});
+    todayCost += costOfModels(todayModels.get(d.path) ?? {}, config.priceOverrides);
   }
   snap.todayCost = anyCostEnabled ? todayCost : null;
 
   for (const s of [...snap.sessions.active, ...snap.sessions.recent]) {
-    s.cost = costEnabledFor(s.dir) ? costOfModels(s.byModel) : null;
+    s.cost = costEnabledFor(s.dir) ? costOfModels(s.byModel, config.priceOverrides) : null;
   }
 
   // Fan out per-dir quota fetches in parallel; quota module handles
@@ -366,6 +367,12 @@ app.whenReady().then(async () => {
   registerIPC(ipcMain, {
     'store:snapshot': async () => currentSnapshot(),
     'config:get': async () => loadConfig(),
+    'discover:dirs': async () => {
+      const config = await loadConfig();
+      const configured = new Set(dirsFromConfig(config).map(d => d.path));
+      const candidates = await discoverAgentDirs();
+      return candidates.filter(c => !configured.has(normalizeDir({ path: c.path }).path));
+    },
     'config:set': async (_event, args) => {
       const partial = args as Partial<Config>;
       const prevConfig = await loadConfig();

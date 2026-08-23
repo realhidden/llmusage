@@ -26,6 +26,9 @@ const PRICES: Array<{ match: RegExp; price: ModelPrice }> = [
 
 const DEFAULT_PRICE: ModelPrice = { input: 1, output: 4, cacheRead: 0.1, cacheWrite: 1.25 };
 
+/** User-set price override; missing fields inherit the built-in table. */
+export type ModelPriceOverride = Partial<ModelPrice>;
+
 export function priceForModel(model: string): ModelPrice {
   for (const entry of PRICES) {
     if (entry.match.test(model)) return entry.price;
@@ -33,9 +36,29 @@ export function priceForModel(model: string): ModelPrice {
   return DEFAULT_PRICE;
 }
 
+/**
+ * Effective price for a model: exact-id user override first (per-field),
+ * then the built-in family table.
+ */
+export function effectivePrice(model: string, overrides?: Record<string, ModelPriceOverride>): ModelPrice {
+  const base = priceForModel(model);
+  const o = overrides?.[model];
+  if (!o) return base;
+  return {
+    input: o.input ?? base.input,
+    output: o.output ?? base.output,
+    cacheRead: o.cacheRead ?? base.cacheRead,
+    cacheWrite: o.cacheWrite ?? base.cacheWrite,
+  };
+}
+
 /** Compute cost in USD for a set of tokens under a given model. */
-export function costOf(model: string, tokens: { input: number; output: number; cacheRead: number; cacheCreate: number }): number {
-  const p = priceForModel(model);
+export function costOf(
+  model: string,
+  tokens: { input: number; output: number; cacheRead: number; cacheCreate: number },
+  overrides?: Record<string, ModelPriceOverride>
+): number {
+  const p = effectivePrice(model, overrides);
   return (
     (tokens.input * p.input) / 1e6 +
     (tokens.output * p.output) / 1e6 +
@@ -45,10 +68,13 @@ export function costOf(model: string, tokens: { input: number; output: number; c
 }
 
 /** Sum cost across a byModel record. */
-export function costOfModels(byModel: Record<string, { input: number; output: number; cacheRead: number; cacheCreate: number }>): number {
+export function costOfModels(
+  byModel: Record<string, { input: number; output: number; cacheRead: number; cacheCreate: number }>,
+  overrides?: Record<string, ModelPriceOverride>
+): number {
   let total = 0;
   for (const [model, tokens] of Object.entries(byModel)) {
-    total += costOf(model, tokens);
+    total += costOf(model, tokens, overrides);
   }
   return total;
 }

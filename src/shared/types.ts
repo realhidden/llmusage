@@ -93,6 +93,12 @@ export type DataDirEntry =
   | string
   | { path: string; label?: string; fiveHourTokens?: number; weeklyTokens?: number; estimateCost?: boolean };
 
+export type DiscoveredDir = {
+  path: string;
+  /** Heuristic provider guess derived from the layout that matched. */
+  kind: 'claude-like' | 'codex-like' | 'zcode-like';
+};
+
 export type Config = {
   plan?: string;
   limits?: {
@@ -101,6 +107,7 @@ export type Config = {
   };
   autoLaunch?: boolean;
   dataDirs?: DataDirEntry[];
+  priceOverrides?: Record<string, import('./pricing.js').ModelPriceOverride>;
   theme?: 'system' | 'dark' | 'light';
 };
 
@@ -117,6 +124,7 @@ export type Invokes = {
   'store:snapshot': { req: {}; res: StoreSnapshot };
   'config:get': { req: {}; res: Config };
   'config:set': { req: Partial<Config>; res: Config };
+  'discover:dirs': { req: {}; res: DiscoveredDir[] };
   'app:openProject': { req: { cwd: string }; res: void };
   'app:checkUpdate': { req: {}; res: UpdateCheckResult };
   'app:openUpdate': { req: { url: string }; res: void };
