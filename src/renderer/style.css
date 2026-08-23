@@ -1113,9 +1113,23 @@ body {
   accent-color: var(--fg-accent);
 }
 
+.settings-dir-row.discovered {
+  opacity: 0.55;
+  padding: 3px 0 3px 8px;
+}
+
 .settings-dir-row.discovered .settings-dir-label {
   color: var(--fg-dim);
   font-style: italic;
+}
+
+.discovered-header {
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  padding: 6px 0 1px 8px;
+  border-bottom: none;
 }
 
 .settings-discover-add {

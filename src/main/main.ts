@@ -274,13 +274,22 @@ function checkThresholdAlerts(snap: StoreSnapshot): void {
   }
 }
 
-async function reloadData(config: Config): Promise<void> {
-  watcher?.stop();
-  store.reset();
-  watcher = createWatcher(config);
-  await watcher.coldScan();
-  watcher.start();
-  await sendSnapshot();
+/**
+ * Apply a changed dir set on the long-lived watcher: additions are scanned,
+ * removals purged — unchanged files are never re-read. Serialized so rapid
+ * successive config edits can't interleave scans.
+ */
+let dirChangeChain: Promise<void> = Promise.resolve();
+function scheduleDirChange(config: Config): void {
+  const paths = dirsFromConfig(config).map(d => d.path);
+  dirChangeChain = dirChangeChain
+    .then(async () => {
+      await watcher?.setDirs(paths);
+      await sendSnapshot();
+    })
+    .catch(err => {
+      console.error('[llmusage] dir change failed:', err);
+    });
 }
 
 app.whenReady().then(async () => {
@@ -377,13 +386,14 @@ app.whenReady().then(async () => {
       const partial = args as Partial<Config>;
       const prevConfig = await loadConfig();
       const config = await saveConfig(partial);
-      // Full rescan only when the SET of normalized dir paths changed (add/remove/
-      // reorder). Metadata-only edits (labels, limits, per-dir cost) just repaint.
+      // Respond immediately — the UI must never wait on a rescan. Dir-set
+      // changes (add/remove/reorder) are applied in the background; the
+      // resulting snapshot broadcast repaints the data once done.
       const dirsChanged =
         Object.prototype.hasOwnProperty.call(partial, 'dataDirs') &&
         dirSetKey(prevConfig) !== dirSetKey(config);
       if (dirsChanged) {
-        await reloadData(config);
+        scheduleDirChange(config);
       } else {
         await sendSnapshot();
       }

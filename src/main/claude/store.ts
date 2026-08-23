@@ -230,6 +230,34 @@ export class Store {
     this.emit();
   }
 
+  /** Whether parsed data exists for this file (guards scan-skip caching). */
+  hasFile(filePath: string): boolean {
+    return this.byFile.has(filePath);
+  }
+
+  /**
+   * Drop all data belonging to the given dirs and rebuild aggregates from
+   * retained per-file events — in-memory only, no disk re-reads.
+   */
+  purgeDirs(dirs: string[]): void {
+    const set = new Set(dirs);
+    let removed = false;
+    for (const [path, file] of [...this.byFile]) {
+      if (set.has(file.dir)) {
+        this.byFile.delete(path);
+        removed = true;
+      }
+    }
+    if (!removed) {
+      // Still clear quota state for the removed dirs.
+      for (const d of set) this.codexRateLimits.delete(d);
+      return;
+    }
+    this.rebuildAggregates();
+    for (const d of set) this.codexRateLimits.delete(d);
+    this.emit();
+  }
+
   reset(): void {
     this.byDay.clear();
     this.byDayByDir.clear();

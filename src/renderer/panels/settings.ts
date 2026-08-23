@@ -159,13 +159,16 @@ export async function renderSettings(container: HTMLElement, config: Config): Pr
       discoveredList.innerHTML = '';
       return;
     }
-    discoveredList.innerHTML = candidates.map(c => `
-      <div class="settings-dir-row discovered">
-        <span class="settings-dir-label">${escapeHtml(defaultLabel(c.path))}</span>
-        <span class="settings-dir-path">${escapeHtml(c.path)}</span>
-        <button class="settings-discover-add" data-path="${escapeAttr(c.path)}">add</button>
-      </div>
-    `).join('');
+    discoveredList.innerHTML = `
+      <div class="discovered-header">found on disk — not tracked</div>
+      ${candidates.map(c => `
+        <div class="settings-dir-row discovered">
+          <span class="settings-dir-label">${escapeHtml(defaultLabel(c.path))}</span>
+          <span class="settings-dir-path">${escapeHtml(c.path)}</span>
+          <button class="settings-discover-add" data-path="${escapeAttr(c.path)}">track</button>
+        </div>
+      `).join('')}
+    `;
     discoveredList.querySelectorAll('.settings-discover-add').forEach(btn => {
       btn.addEventListener('click', async () => {
         const path = (btn as HTMLElement).dataset.path ?? '';
