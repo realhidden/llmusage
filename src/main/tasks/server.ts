@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
-import { writeFile, mkdir, unlink } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, unlink } from 'node:fs/promises';
 import type { TaskStore, TaskUpsert } from './store.js';
 
 export const DEFAULT_PORT = 7377;
@@ -15,8 +15,46 @@ const DEFAULT_ENDPOINT_FILE = join(homedir(), '.config', 'llmusage', 'endpoint.j
 export type ProgressServer = {
   port: number;
   url: string;
+  /** False when another live instance owns the discovery file. */
+  published: boolean;
   close(): Promise<void>;
 };
+
+type EndpointFile = { port?: number; pid?: number };
+
+/**
+ * Whether we may claim the discovery file. A second instance (a dev build
+ * started next to the installed app, say) binds a fallback port; if it
+ * republished the file, every agent's `mystatus-progress` push would silently
+ * land in the wrong instance. So a file owned by another live process is left
+ * alone.
+ */
+export function shouldClaimEndpointFile(
+  existing: string | null,
+  selfPid: number,
+  isAlive: (pid: number) => boolean
+): boolean {
+  if (!existing) return true;
+  let parsed: EndpointFile;
+  try {
+    parsed = JSON.parse(existing) as EndpointFile;
+  } catch {
+    return true; // corrupt file: ours now
+  }
+  const pid = parsed.pid;
+  if (typeof pid !== 'number' || pid === selfPid) return true;
+  return !isAlive(pid);
+}
+
+/** Does this pid exist? Signal 0 probes without delivering anything. */
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
 
 type StartOptions = {
   store: TaskStore;
@@ -52,14 +90,30 @@ export async function startProgressServer(opts: StartOptions): Promise<ProgressS
   const port = await listenWithFallback(server, basePort);
   const url = `http://${HOST}:${port}`;
   const endpointFile = opts.endpointFile === undefined ? DEFAULT_ENDPOINT_FILE : opts.endpointFile;
-  if (endpointFile) await writeEndpointFile(endpointFile, port, url, opts.version);
+  let published = false;
+  if (endpointFile) {
+    const existing = await readFile(endpointFile, 'utf-8').catch(() => null);
+    if (shouldClaimEndpointFile(existing, process.pid, processAlive)) {
+      await writeEndpointFile(endpointFile, port, url, opts.version);
+      published = true;
+    } else {
+      console.warn(
+        `[llmusage] another instance owns ${endpointFile}; serving on ${url} without publishing it`
+      );
+    }
+  }
 
   return {
     port,
     url,
+    published,
     async close() {
       await new Promise<void>(resolve => server.close(() => resolve()));
-      if (endpointFile) await unlink(endpointFile).catch(() => {});
+      // Only retract our own file — never another instance's.
+      if (!endpointFile || !published) return;
+      const current = await readFile(endpointFile, 'utf-8').catch(() => null);
+      if (current && !shouldClaimEndpointFile(current, process.pid, () => true)) return;
+      await unlink(endpointFile).catch(() => {});
     },
   };
 }

@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { TaskStore } from './store.js';
-import { startProgressServer, buildUpsert, type ProgressServer } from './server.js';
+import { startProgressServer, buildUpsert, shouldClaimEndpointFile, type ProgressServer } from './server.js';
 
 describe('buildUpsert', () => {
   it('takes the id from the path, then the body', () => {
@@ -33,6 +33,63 @@ describe('buildUpsert', () => {
     const patch = buildUpsert({ note: null, etaAt: null }, new URLSearchParams(), 'a')!;
     expect(patch.note).toBeNull();
     expect(patch.etaAt).toBeNull();
+  });
+});
+
+describe('shouldClaimEndpointFile', () => {
+  const alive = () => true;
+  const dead = () => false;
+
+  it('claims when there is no file, or it is corrupt', () => {
+    expect(shouldClaimEndpointFile(null, 10, alive)).toBe(true);
+    expect(shouldClaimEndpointFile('{not json', 10, alive)).toBe(true);
+  });
+
+  it('claims its own file back', () => {
+    expect(shouldClaimEndpointFile(JSON.stringify({ pid: 10, port: 7377 }), 10, alive)).toBe(true);
+  });
+
+  it('leaves a file owned by another live instance alone', () => {
+    expect(shouldClaimEndpointFile(JSON.stringify({ pid: 99, port: 7377 }), 10, alive)).toBe(false);
+  });
+
+  it('takes over from a dead instance', () => {
+    expect(shouldClaimEndpointFile(JSON.stringify({ pid: 99, port: 7377 }), 10, dead)).toBe(true);
+  });
+
+  it('claims when the file has no pid', () => {
+    expect(shouldClaimEndpointFile(JSON.stringify({ port: 7377 }), 10, alive)).toBe(true);
+  });
+});
+
+describe('endpoint file ownership', () => {
+  it('does not publish or delete a live instance file, and publishes otherwise', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'llmusage-endpoint-'));
+    const endpointFile = join(dir, 'endpoint.json');
+    const store = new TaskStore({ statePath: join(dir, 'tasks.json') });
+
+    // pid 1 (launchd) is always alive and is not us.
+    const foreign = JSON.stringify({ url: 'http://127.0.0.1:7377', port: 7377, pid: 1 });
+    await writeFile(endpointFile, foreign, 'utf-8');
+
+    const second = await startProgressServer({ store, port: 0, version: 'test', endpointFile });
+    expect(second.published).toBe(false);
+    expect(await readFile(endpointFile, 'utf-8')).toBe(foreign);
+    await second.close();
+    // The foreign file must survive our shutdown.
+    expect(await readFile(endpointFile, 'utf-8')).toBe(foreign);
+
+    await rm(endpointFile);
+    const owner = await startProgressServer({ store, port: 0, version: 'test', endpointFile });
+    expect(owner.published).toBe(true);
+    const written = JSON.parse(await readFile(endpointFile, 'utf-8'));
+    expect(written.pid).toBe(process.pid);
+    expect(written.port).toBe(owner.port);
+    await owner.close();
+    await expect(readFile(endpointFile, 'utf-8')).rejects.toThrow();
+
+    store.flushTimers();
+    await rm(dir, { recursive: true, force: true });
   });
 });
 

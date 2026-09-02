@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { TaskStore } from './store.js';
 
 const T0 = Date.parse('2026-09-02T10:00:00Z');
@@ -108,6 +108,7 @@ describe('TaskStore.view', () => {
   it('derives an ETA from observed rate and prefers an agent-supplied one', async () => {
     const s = await tempStore();
     s.upsert({ id: 'a', current: 0, total: 1200 }, min(0));
+    s.upsert({ id: 'a', current: 300 }, min(5));
     s.upsert({ id: 'a', current: 600 }, min(10));       // 1 item/s
     let v = s.view(min(10))[0]!;
     expect(v.ratePerSec).toBeCloseTo(1, 6);
@@ -116,6 +117,35 @@ describe('TaskStore.view', () => {
 
     s.upsert({ id: 'a', etaAt: iso(min(30)) }, min(11));
     v = s.view(min(11))[0]!;
+    expect(v.etaEffective).toBe(iso(min(30)));
+    s.flushTimers();
+  });
+
+  it('withholds a derived ETA until a second progress report', async () => {
+    const s = await tempStore();
+    // Registered mid-flight: the jump to 8.2M must not project a finish.
+    s.upsert({ id: 'a', current: 0, total: 41_200_000 }, min(0));
+    s.upsert({ id: 'a', current: 8_200_000 }, min(0) + 2_000);
+    let v = s.view(min(1))[0]!;
+    expect(v.progressReports).toBe(1);
+    expect(v.etaComputed).toBeNull();
+    expect(v.etaEffective).toBeNull();
+    expect(v.ratePerSec).toBeNull();
+    // Percent is still shown — only the projection waits.
+    expect(v.pct).toBeCloseTo(19.9, 1);
+
+    s.upsert({ id: 'a', current: 8_260_000 }, min(1) + 2_000);
+    v = s.view(min(1) + 2_000)[0]!;
+    expect(v.progressReports).toBe(2);
+    expect(v.etaComputed).not.toBeNull();
+    s.flushTimers();
+  });
+
+  it('still honors an agent-supplied ETA on the first report', async () => {
+    const s = await tempStore();
+    s.upsert({ id: 'a', current: 5, total: 100, etaAt: iso(min(30)) }, min(0));
+    const v = s.view(min(0))[0]!;
+    expect(v.etaComputed).toBeNull();
     expect(v.etaEffective).toBe(iso(min(30)));
     s.flushTimers();
   });
@@ -139,6 +169,54 @@ describe('TaskStore.view', () => {
     s.upsert({ id: 'running' }, min(2));
     s.upsert({ id: 'paused', status: 'paused' }, min(3));
     expect(s.view(min(4)).map(t => t.id)).toEqual(['running', 'paused', 'failed', 'done']);
+    s.flushTimers();
+  });
+});
+
+describe('TaskStore.setNotify', () => {
+  it('is off by default and toggles', async () => {
+    const s = await tempStore();
+    s.upsert({ id: 'a' }, min(0));
+    expect(s.get('a')!.notifyOnFinish).toBe(false);
+    expect(s.setNotify('a', true)).toBe(true);
+    expect(s.get('a')!.notifyOnFinish).toBe(true);
+    // No-op when already in that state, and for an unknown task.
+    expect(s.setNotify('a', true)).toBe(false);
+    expect(s.setNotify('ghost', true)).toBe(false);
+    s.flushTimers();
+  });
+
+  it('fires onFinish once, only for armed tasks', async () => {
+    const s = await tempStore();
+    const fired: string[] = [];
+    s.onFinish(t => fired.push(`${t.id}:${t.status}`));
+
+    s.upsert({ id: 'quiet', total: 10 }, min(0));
+    s.upsert({ id: 'quiet', status: 'done' }, min(1));
+    expect(fired).toEqual([]);
+
+    s.upsert({ id: 'armed', total: 10 }, min(0));
+    s.setNotify('armed', true);
+    s.upsert({ id: 'armed', current: 5 }, min(1));
+    expect(fired).toEqual([]);
+
+    s.upsert({ id: 'armed', status: 'done' }, min(2));
+    expect(fired).toEqual(['armed:done']);
+
+    // Further updates on an already-finished task must not ding again.
+    s.upsert({ id: 'armed', note: 'tidy up' }, min(3));
+    expect(fired).toEqual(['armed:done']);
+    s.flushTimers();
+  });
+
+  it('fires on failure too', async () => {
+    const s = await tempStore();
+    const fired: string[] = [];
+    s.onFinish(t => fired.push(t.status));
+    s.upsert({ id: 'a' }, min(0));
+    s.setNotify('a', true);
+    s.upsert({ id: 'a', status: 'failed' }, min(1));
+    expect(fired).toEqual(['failed']);
     s.flushTimers();
   });
 });
@@ -183,6 +261,7 @@ describe('TaskStore persistence', () => {
 
     const a = new TaskStore({ statePath });
     a.upsert({ id: 'x', title: 'Extract', current: 7, total: 10, unit: 'files' }, min(0));
+    a.setNotify('x', true);
     a.flushTimers();
     await a.save();
 
@@ -192,6 +271,47 @@ describe('TaskStore persistence', () => {
     expect(t.title).toBe('Extract');
     expect(t.current).toBe(7);
     expect(t.unit).toBe('files');
+    expect(t.notifyOnFinish).toBe(true);
     expect(t.history).toHaveLength(1);
+  });
+
+  it('keeps an in-flight task resumable: history and rate survive a reload', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'llmusage-tasks-'));
+    dirs.push(dir);
+    const statePath = join(dir, 'tasks.json');
+
+    const a = new TaskStore({ statePath });
+    a.upsert({ id: 'job', total: 1200, current: 0 }, min(0));
+    a.upsert({ id: 'job', current: 300 }, min(5));
+    a.upsert({ id: 'job', current: 600 }, min(10));
+    a.flushTimers();
+    await a.save();
+
+    const b = new TaskStore({ statePath });
+    await b.load();
+    const v = b.view(min(10))[0]!;
+    expect(v.id).toBe('job');
+    expect(v.history).toHaveLength(3);
+    expect(v.ratePerSec).toBeCloseTo(1, 6);
+    expect(v.etaComputed).toBe(iso(min(10) + 600_000));
+  });
+
+  it('adopts state written before notifyOnFinish existed', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'llmusage-tasks-'));
+    dirs.push(dir);
+    const statePath = join(dir, 'tasks.json');
+    // A 0.4.0 tasks.json has no notifyOnFinish field.
+    await writeFile(statePath, JSON.stringify({
+      tasks: [{
+        id: 'legacy', title: 'Legacy', parent: null, status: 'running', current: 1,
+        total: 10, unit: null, note: null, source: null,
+        startedAt: iso(min(0)), updatedAt: iso(min(0)), etaAt: null,
+        ttlSeconds: 300, history: [],
+      }],
+    }), 'utf-8');
+
+    const s = new TaskStore({ statePath });
+    await s.load();
+    expect(s.get('legacy')!.notifyOnFinish).toBe(false);
   });
 });

@@ -394,6 +394,13 @@ app.whenReady().then(async () => {
     }, 200);
   });
 
+  // Bell-armed tasks ding when they finish. Sound only — no notification, the
+  // panel already carries the outcome.
+  tasks.onFinish((task) => {
+    console.log(`[llmusage] task finished: ${task.id} (${task.status})`);
+    playCompletionSound();
+  });
+
   // Task pushes repaint through the same debounced broadcast as usage changes.
   tasks.onChange(() => {
     if (broadcastTimer) return;
@@ -461,12 +468,17 @@ app.whenReady().then(async () => {
     'tasks:clearFinished': async () => {
       tasks.clearFinished();
     },
+    'tasks:setNotify': async (_event, args) => {
+      const { id, enabled } = args as { id: string; enabled: boolean };
+      tasks.setNotify(id, enabled);
+    },
     'tasks:endpoint': async () => {
       const config = await loadConfig();
       return {
         enabled: config.progress?.enabled !== false,
         port: progressServer?.port ?? null,
         url: progressServer?.url ?? null,
+        published: progressServer?.published === true,
       };
     },
   });

@@ -78,9 +78,15 @@ export async function renderSettings(container: HTMLElement, config: Config): Pr
       endpointEl.textContent = 'disabled';
       return;
     }
-    endpointEl.textContent = info.url
+    if (!info.url) {
+      endpointEl.textContent = 'not listening — check the console for a port conflict';
+      return;
+    }
+    // An unpublished endpoint means another instance owns the discovery file,
+    // so agents are pushing there, not here.
+    endpointEl.textContent = info.published
       ? `${info.url}/v1/tasks`
-      : 'not listening — check the console for a port conflict';
+      : `${info.url}/v1/tasks — not published: another instance owns the endpoint file`;
   }).catch(() => {
     endpointEl.textContent = 'unavailable';
   });

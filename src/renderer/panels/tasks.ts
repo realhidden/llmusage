@@ -1,8 +1,13 @@
 import type { StoreSnapshot, TaskView, TaskPoint } from '../../shared/types.js';
 import { formatCompact } from '../components/token-bar.js';
 
+/** Progress reports needed before an ETA is shown; mirrors main's eta.ts. */
+const MIN_PROGRESS_REPORTS = 2;
+
 /** Task ids whose detail (charts, note, source) is expanded. */
 const expanded = new Set<string>();
+/** Task ids whose subtask list is expanded. Collapsed by default. */
+const childrenOpen = new Set<string>();
 
 export function renderTasks(container: HTMLElement, snapshot: StoreSnapshot): void {
   const tasks = snapshot.tasks ?? [];
@@ -38,6 +43,26 @@ export function renderTasks(container: HTMLElement, snapshot: StoreSnapshot): vo
     });
   }
 
+  for (const btn of container.querySelectorAll<HTMLElement>('[data-task-children]')) {
+    btn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const id = btn.dataset.taskChildren!;
+      if (childrenOpen.has(id)) childrenOpen.delete(id);
+      else childrenOpen.add(id);
+      renderTasks(container, snapshot);
+    });
+  }
+
+  for (const btn of container.querySelectorAll<HTMLElement>('[data-task-bell]')) {
+    btn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      window.api.invoke('tasks:setNotify', {
+        id: btn.dataset.taskBell!,
+        enabled: btn.dataset.bellOn !== 'true',
+      });
+    });
+  }
+
   for (const btn of container.querySelectorAll<HTMLElement>('[data-task-remove]')) {
     btn.addEventListener('click', (ev) => {
       ev.stopPropagation();
@@ -57,6 +82,7 @@ function taskCard(task: TaskView): string {
         <span class="task-dot ${statusClass(task)}"></span>
         <span class="task-title" title="${escapeAttr(task.id)}">${escapeHtml(task.title)}</span>
         ${statusTag(task)}
+        ${task.notifyOnFinish ? '<span class="task-bell-on" title="Dings when this task finishes">\u{1F514}</span>' : ''}
         <span class="task-pct">${pct == null ? '—' : `${pct.toFixed(0)}%`}</span>
         <span class="task-caret">${open ? '▾' : '▸'}</span>
       </div>
@@ -66,15 +92,36 @@ function taskCard(task: TaskView): string {
       <div class="task-meta">${metaLine(task)}</div>
       ${task.note ? `<div class="task-note">${escapeHtml(task.note)}</div>` : ''}
       ${open ? taskDetail(task) : ''}
-      ${task.children.length > 0 ? `<div class="task-children">${task.children.map(c => taskCard(c)).join('')}</div>` : ''}
+      ${childrenSection(task)}
     </div>`;
+}
+
+/** Subtasks are collapsed by default: a summary line opens them. */
+function childrenSection(task: TaskView): string {
+  const kids = task.children;
+  if (kids.length === 0) return '';
+  const open = childrenOpen.has(task.id);
+  const running = kids.filter(k => k.status === 'running').length;
+  const done = kids.filter(k => k.status === 'done').length;
+  const summary = [
+    `${kids.length} subtask${kids.length === 1 ? '' : 's'}`,
+    running > 0 ? `${running} running` : null,
+    done > 0 ? `${done} done` : null,
+  ].filter(Boolean).join(' · ');
+
+  return `
+    <button type="button" class="task-children-toggle" data-task-children="${escapeAttr(task.id)}" aria-expanded="${open}">
+      <span class="task-caret">${open ? '▾' : '▸'}</span>${escapeHtml(summary)}
+    </button>
+    ${open ? `<div class="task-children">${kids.map(c => taskCard(c)).join('')}</div>` : ''}`;
 }
 
 function taskDetail(task: TaskView): string {
   const rate = task.ratePerSec != null ? formatRate(task.ratePerSec, task.unit) : null;
   const facts = [
     rate ? `rate ${rate}` : null,
-    task.etaAt ? 'eta: reported' : task.etaComputed ? 'eta: derived from rate' : null,
+    etaSource(task),
+    task.status === 'running' ? `stale after ${formatRelative(task.ttlSeconds * 1000)} without an update` : null,
     task.source ? escapeHtml(task.source) : null,
     `id ${escapeHtml(task.id)}`,
   ].filter(Boolean);
@@ -84,8 +131,23 @@ function taskDetail(task: TaskView): string {
       ${progressChart(task)}
       ${etaChart(task)}
       <div class="task-facts">${facts.map(f => `<span>${f}</span>`).join('')}</div>
-      <button type="button" class="task-remove" data-task-remove="${escapeAttr(task.id)}">Remove</button>
+      <div class="task-detail-actions">
+        <button type="button" class="task-bell${task.notifyOnFinish ? ' on' : ''}"
+                data-task-bell="${escapeAttr(task.id)}" data-bell-on="${task.notifyOnFinish}"
+                aria-pressed="${task.notifyOnFinish}"
+                title="Play a sound when this task finishes">
+          \u{1F514} ${task.notifyOnFinish ? 'ding on finish: on' : 'ding on finish: off'}
+        </button>
+        <button type="button" class="task-remove" data-task-remove="${escapeAttr(task.id)}">Remove</button>
+      </div>
     </div>`;
+}
+
+function etaSource(task: TaskView): string | null {
+  if (task.etaAt) return 'eta: reported by the job';
+  if (task.etaComputed) return 'eta: derived from rate';
+  if (task.total == null) return 'eta: needs a total';
+  return `eta: needs ${MIN_PROGRESS_REPORTS - task.progressReports} more progress report${MIN_PROGRESS_REPORTS - task.progressReports === 1 ? '' : 's'}`;
 }
 
 /* ------------------------------------------------------------------- meta --- */
@@ -103,6 +165,9 @@ function metaLine(task: TaskView): string {
       parts.push(left > 0
         ? `eta ${formatClock(eta)} · in ${formatRelative(left)}`
         : `eta ${formatClock(eta)} · overdue`);
+    } else if (task.total != null && task.progressReports < MIN_PROGRESS_REPORTS) {
+      // One report only measures the gap from registration, which is not a rate.
+      parts.push('eta after next update');
     } else {
       parts.push('eta unknown');
     }
@@ -135,7 +200,10 @@ function statusTag(task: TaskView): string {
   const cls = statusClass(task);
   if (cls === 'running') return '';
   const label = cls === 'stale' ? 'stale' : task.status;
-  return `<span class="task-tag ${cls}">${label}</span>`;
+  const title = cls === 'stale'
+    ? `No update for ${formatRelative(Date.now() - Date.parse(task.updatedAt))}; this task reports every ${formatRelative(task.ttlSeconds * 1000)} or less`
+    : '';
+  return `<span class="task-tag ${cls}" title="${escapeAttr(title)}">${label}</span>`;
 }
 
 /* ----------------------------------------------------------------- charts --- */

@@ -21,15 +21,15 @@ panel is first in `#panels` and `hidden` whenever `snapshot.tasks` is empty.
 ```
 TASKS                    2 running   clear done
 ┌──────────────────────────────────────────────┐
-│ ● Orders backfill 2019-2024            15% ▸ │
+│ ● Orders backfill 2019-2024         🔔  15% ▸ │
 │ ███░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ │
 │ 6M / 41.2M rows  started 1h 35m ago          │
 │ eta 05:34 · in 8h 33m                        │
 │ shard 4/8 · last key 2022-07-11              │
-│  │ ● shard 4/8 (2022)                  18% ▸ │
-│  │ ████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ │
-│  │ 927.2K / 5.1M rows  eta 22:16 · in 1h 15m │
+│ ▸ 1 subtask · 1 running                      │
 ├──────────────────────────────────────────────┤
+│ ● Invoice import (just started)         20% ▸ │
+│ 8.2M / 41.2M rows  eta after next update     │
 │ ● Search Console daily pull  [STALE]     — ▸ │
 │ ● Warehouse vacuum full      [DONE]    100% ▸│
 └──────────────────────────────────────────────┘
@@ -37,14 +37,32 @@ TASKS                    2 running   clear done
 
 - Status dot / bar color: green running, amber paused or stale, red failed, gray done.
 - `%` is `pct`; `—` when neither the task nor its children know a total.
-- Click a row → expands the progress chart, the ETA-drift chart, rate, source and
-  a Remove button. Expansion state is per task id and survives re-renders.
-- Sub-tasks are indented under their parent behind a left rule, with slimmer bars.
+- Click a row → expands the progress chart, the ETA-drift chart, rate, the stale
+  rule, source, the finish-sound bell and a Remove button. Expansion state is
+  per task id and survives re-renders.
+- **Subtasks are collapsed by default** behind a `N subtasks · N running` line;
+  opening it indents them under the parent behind a left rule with slimmer bars.
+- 🔔 on a row means the finish sound is armed for that task. It is off by
+  default and can only be turned on in the expanded detail.
+- `eta after next update` shows while a task has only one progress report —
+  see [PROGRESS.md](PROGRESS.md) for why the projection waits.
 - `clear done` appears only while a `done`/`failed` task is listed.
 
 Charts, retention and staleness rules: [PROGRESS.md](PROGRESS.md).
 
 ## Section 1 — Today
+
+The stacked token bar is always visible. Two icons in the panel label toggle the
+detail views, both closed by default:
+
+- `◔` — per-model quota rings with their reset clocks (`limits.plans`).
+- `⤵` — rolling burn: 5h and 7d usage against caps, with pace projection.
+
+```
+TODAY  Sep 2                              ◔  ⤵
+████████████████████████████████████  8.5M
+● in 120K  ● out 48K  ● ↑ 900K  ● ↓ 7.4M
+```
 
 ```
 TODAY                     2026-05-03

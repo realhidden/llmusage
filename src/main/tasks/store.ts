@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import { writeFileSync, renameSync, mkdirSync } from 'node:fs';
 import type { TaskProgress, TaskPoint, TaskStatus, TaskView } from '../../shared/types.js';
-import { pctOf, projectEta, ratePerSec, type RatePoint } from './eta.js';
+import { pctOf, progressReports, projectEta, ratePerSec, type RatePoint } from './eta.js';
 
 const DEFAULT_STATE_PATH = join(homedir(), '.config', 'llmusage', 'tasks.json');
 
@@ -38,6 +38,7 @@ export type TaskUpsert = {
 export class TaskStore {
   private tasks = new Map<string, TaskProgress>();
   private listeners: Array<() => void> = [];
+  private finishListeners: Array<(task: TaskProgress) => void> = [];
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly statePath: string;
 
@@ -59,6 +60,15 @@ export class TaskStore {
     this.scheduleSave();
   }
 
+  /** Fires when a task with notifyOnFinish reaches done/failed. */
+  onFinish(fn: (task: TaskProgress) => void): () => void {
+    this.finishListeners.push(fn);
+    return () => {
+      const idx = this.finishListeners.indexOf(fn);
+      if (idx >= 0) this.finishListeners.splice(idx, 1);
+    };
+  }
+
   /** Create or patch a task. Only supplied fields are overwritten. */
   upsert(patch: TaskUpsert, nowMs: number = Date.now()): TaskProgress {
     const nowISO = new Date(nowMs).toISOString();
@@ -78,9 +88,11 @@ export class TaskStore {
       updatedAt: nowISO,
       etaAt: null,
       ttlSeconds: DEFAULT_TTL_SECONDS,
+      notifyOnFinish: false,
       history: [],
     };
 
+    const wasFinished = isFinished(task.status);
     if (patch.title != null) task.title = patch.title;
     if (patch.parent !== undefined) task.parent = patch.parent || null;
     if (patch.status != null && STATUSES.includes(patch.status as TaskStatus)) {
@@ -111,6 +123,10 @@ export class TaskStore {
     this.tasks.set(task.id, task);
     this.sample(task, nowMs);
     this.emit();
+
+    if (!wasFinished && isFinished(task.status) && task.notifyOnFinish) {
+      for (const fn of this.finishListeners) fn(task);
+    }
     return task;
   }
 
@@ -137,6 +153,15 @@ export class TaskStore {
     }
   }
 
+  /** Arm or disarm the finish sound for one task. */
+  setNotify(id: string, enabled: boolean): boolean {
+    const task = this.tasks.get(id);
+    if (!task || task.notifyOnFinish === enabled) return false;
+    task.notifyOnFinish = enabled;
+    this.emit();
+    return true;
+  }
+
   /** Remove a task and, recursively, everything parented to it. */
   remove(id: string): number {
     if (!this.tasks.has(id)) return 0;
@@ -156,7 +181,7 @@ export class TaskStore {
 
   /** Drop every done/failed task regardless of retention. */
   clearFinished(): number {
-    const finished = [...this.tasks.values()].filter(t => t.status === 'done' || t.status === 'failed');
+    const finished = [...this.tasks.values()].filter(t => isFinished(t.status));
     let removed = 0;
     for (const t of finished) removed += this.remove(t.id);
     return removed;
@@ -182,8 +207,7 @@ export class TaskStore {
   prune(nowMs: number = Date.now()): boolean {
     let changed = false;
     for (const t of [...this.tasks.values()]) {
-      const finished = t.status === 'done' || t.status === 'failed';
-      if (finished && nowMs - Date.parse(t.updatedAt) > FINISHED_RETENTION_MS) {
+      if (isFinished(t.status) && nowMs - Date.parse(t.updatedAt) > FINISHED_RETENTION_MS) {
         this.tasks.delete(t.id);
         changed = true;
       }
@@ -212,6 +236,7 @@ export class TaskStore {
         .map(c => build(c, Math.min(depth + 1, MAX_DEPTH), seen));
 
       const points = ratePoints(task);
+      const reports = progressReports(points);
       const rate = ratePerSec(points);
       const etaComputed = isoOrNull(projectEta(points, task.total, nowMs));
       const ownPct = pctOf(task.current, task.total);
@@ -225,6 +250,7 @@ export class TaskStore {
         etaComputed,
         etaEffective: task.etaAt ?? etaComputed,
         ratePerSec: rate,
+        progressReports: reports,
         stale: active && nowMs - Date.parse(task.updatedAt) > task.ttlSeconds * 1000,
         depth,
         children,
@@ -249,6 +275,7 @@ export class TaskStore {
           ...t,
           history: Array.isArray(t.history) ? t.history.slice(-MAX_HISTORY) : [],
           ttlSeconds: t.ttlSeconds > 0 ? t.ttlSeconds : DEFAULT_TTL_SECONDS,
+          notifyOnFinish: t.notifyOnFinish === true,
         });
       }
     } catch {
@@ -291,6 +318,10 @@ export class TaskStore {
       console.error('[llmusage] task state save failed:', err);
     }
   }
+}
+
+function isFinished(status: TaskStatus): boolean {
+  return status === 'done' || status === 'failed';
 }
 
 function ratePoints(task: TaskProgress): RatePoint[] {

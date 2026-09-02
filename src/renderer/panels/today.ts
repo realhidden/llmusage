@@ -1,7 +1,9 @@
 import type { StoreSnapshot, DirLimits, QuotaWindow, PlanQuota, DirPlan } from '../../shared/types.js';
 import { formatCompact, bucketTotal, limitColor } from '../components/token-bar.js';
 
-let detailExpanded = false;
+/** Both detail views are behind icons in the panel label; closed by default. */
+let burnExpanded = false;
+let limitsExpanded = false;
 
 export function renderToday(container: HTMLElement, snapshot: StoreSnapshot): void {
   const today = snapshot.today;
@@ -11,6 +13,24 @@ export function renderToday(container: HTMLElement, snapshot: StoreSnapshot): vo
   const dateEl = container.querySelector('#today-date') as HTMLElement;
   if (dateEl) {
     dateEl.textContent = new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric' }).format(new Date());
+  }
+
+  const togglesEl = container.querySelector('#today-toggles') as HTMLElement;
+  if (togglesEl) {
+    togglesEl.innerHTML = `
+      <button type="button" class="today-icon${limitsExpanded ? ' active' : ''}" id="today-limits-btn"
+              aria-pressed="${limitsExpanded}" title="Per-model quota and reset windows">◔</button>
+      <button type="button" class="today-icon${burnExpanded ? ' active' : ''}" id="today-burn-btn"
+              aria-pressed="${burnExpanded}" title="Rolling burn: 5h and 7d usage against caps">⤵</button>`;
+
+    togglesEl.querySelector('#today-limits-btn')?.addEventListener('click', () => {
+      limitsExpanded = !limitsExpanded;
+      renderToday(container, snapshot);
+    });
+    togglesEl.querySelector('#today-burn-btn')?.addEventListener('click', () => {
+      burnExpanded = !burnExpanded;
+      renderToday(container, snapshot);
+    });
   }
 
   const barsEl = container.querySelector('#today-bars') as HTMLElement;
@@ -35,31 +55,24 @@ export function renderToday(container: HTMLElement, snapshot: StoreSnapshot): vo
       .map(s => `<span class="today-stat"><span class="today-stat-dot ${s.cls}"></span>${s.label} ${formatCompact(s.value)}</span>`)
       .join('');
 
-    const detailHTML = detailExpanded ? renderRollingDetail(snapshot) : '';
-
+    // The bar itself is always visible; the two detail views sit behind icons.
     barsEl.innerHTML = `
-      <button type="button" class="today-total" id="today-total-btn" aria-expanded="${detailExpanded}">
+      <div class="today-total">
         <div class="today-stack">${stackedHTML}</div>
         <div class="today-total-num">${formatCompact(total)}</div>
-        <span class="today-total-caret">${detailExpanded ? '▾' : '▸'}</span>
-      </button>
-      <div class="today-breakdown">${breakdown}</div>
-      ${detailHTML}`;
-
-    const btn = barsEl.querySelector('#today-total-btn');
-    btn?.addEventListener('click', () => {
-      detailExpanded = !detailExpanded;
-      renderToday(container, snapshot);
-    });
+      </div>
+      <div class="today-breakdown">${breakdown}</div>`;
   }
 
   const limitsEl = container.querySelector('#today-limits') as HTMLElement;
   if (limitsEl) {
-    limitsEl.innerHTML = renderAllPlans(snapshot.limits.plans ?? []);
+    limitsEl.innerHTML = limitsExpanded ? renderAllPlans(snapshot.limits.plans ?? []) : '';
   }
 
-  const modelsEl = container.querySelector('#today-models') as HTMLElement;
-  if (modelsEl) modelsEl.innerHTML = '';
+  const burnEl = container.querySelector('#today-burn') as HTMLElement;
+  if (burnEl) {
+    burnEl.innerHTML = burnExpanded ? renderRollingDetail(snapshot) : '';
+  }
 }
 
 function renderAllPlans(plans: DirPlan[]): string {

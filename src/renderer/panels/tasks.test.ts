@@ -6,9 +6,10 @@ function task(over: Partial<TaskView> = {}): TaskView {
   return {
     id: 'a', title: 'A', parent: null, status: 'running', current: 0, total: null,
     unit: null, note: null, source: null, startedAt: '2026-09-02T10:00:00Z',
-    updatedAt: '2026-09-02T10:00:00Z', etaAt: null, ttlSeconds: 300, history: [],
+    updatedAt: '2026-09-02T10:00:00Z', etaAt: null, ttlSeconds: 300,
+    notifyOnFinish: false, history: [],
     pct: null, etaEffective: null, etaComputed: null, ratePerSec: null,
-    stale: false, depth: 0, children: [], ...over,
+    progressReports: 0, stale: false, depth: 0, children: [], ...over,
   };
 }
 

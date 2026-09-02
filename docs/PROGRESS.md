@@ -18,6 +18,13 @@ are tried. The resolved URL is published to `~/.config/llmusage/endpoint.json`:
 
 Clients resolve in this order: `$MYSTATUS_URL`, the discovery file, `http://127.0.0.1:7377`.
 
+The file is owned by one instance. A second instance (a dev build started beside
+the installed app) binds a fallback port and finds the file already claimed by a
+live pid, so it *does not* publish — otherwise every agent push would silently
+land in the wrong instance — and it never deletes a file it does not own. The
+settings panel says `not published` in that state, and `ProgressServer.published`
+carries it. Note that both instances still share `tasks.json`; run one at a time.
+
 | method | path | purpose |
 |---|---|---|
 | GET | `/health` | `{ ok, app, version, tasks }` |
@@ -68,16 +75,31 @@ Everything below is computed in main (`TaskStore.view`), never in the renderer:
 | field | rule |
 |---|---|
 | `pct` | own `current/total`, clamped 0–100. With no total, the average `pct` of children. `done` → 100. |
-| `ratePerSec` | items/sec across the trailing 30 min of samples; `null` if under 2 samples, no elapsed time, or no forward movement |
-| `etaComputed` | `now + (total - current) / rate`; `null` without a total or rate |
+| `ratePerSec` | items/sec across the trailing 30 min, measured from the first reported progress onward; `null` under 2 progress reports, no elapsed time, or no forward movement |
+| `etaComputed` | `now + (total - current) / rate`; `null` without a total, a rate, or 2 progress reports |
 | `etaEffective` | agent-supplied `etaAt` when present, else `etaComputed` |
-| `stale` | `running` and no update within `ttlSeconds` |
+| `progressReports` | forward transitions of `current`; an ETA needs at least 2 |
+| `stale` | `running` and no update within `ttlSeconds` (default 300s) |
 | `depth` | 0 for roots, capped at 3 |
 | `children` | tasks whose `parent` is this id, oldest first |
 
 Rate window details are in [`src/main/tasks/eta.ts`](../src/main/tasks/eta.ts): the
 earliest in-window sample is the baseline, falling back to the newest pre-cutoff
 sample so a slow job still projects.
+
+### Why an ETA waits for two progress reports
+
+The transition from a task's registration sample to its first report is not a
+rate. A job registered at `current: 0` that reports 8.2M rows two seconds later
+did not do 4M rows/sec, and projecting from that produced an ETA of "any moment
+now" for work with hours left — worst for resumed jobs, which start at a large
+non-zero `current`.
+
+So the registration sample never contributes to the rate, and `etaComputed`
+stays `null` until `progressReports >= 2`, i.e. until the rate comes from the
+interval between two real reports. Percent, counts and the progress chart show
+immediately; only the projection waits. An agent-supplied `etaAt` is displayed
+at once — the job knows better than the observer.
 
 ## History and charts
 
@@ -100,8 +122,14 @@ Two charts per expanded task:
 
 - **Hierarchy** — `parent` is a task id. A task whose parent is unknown (deleted,
   or never registered) renders as a root. Cycles are broken by a visited set.
-- **Staleness** — a running task with no heartbeat within `ttlSeconds` dims and
-  shows a STALE tag. It is never deleted for being stale.
+- **Staleness** — a running task with no heartbeat within `ttlSeconds` (default
+  300s, set per task by the agent) dims and shows a STALE tag whose tooltip
+  gives the actual gap and the window; the expanded detail states the rule as
+  "stale after 5m without an update". It is never deleted for being stale.
+- **Finish sound** — `notifyOnFinish` is per task, off by default, and only the
+  user sets it (the bell in the expanded detail; `tasks:setNotify`). When an
+  armed task transitions to `done`/`failed`, `TaskStore.onFinish` fires once and
+  main plays the completion sound. The flag persists with the task.
 - **Retention** — `done`/`failed` tasks disappear 30 min after their last update.
   The panel's `clear done` button and `DELETE /v1/tasks?finished=1` drop them now.
 - **Persistence** — the whole task set (history included) is written to

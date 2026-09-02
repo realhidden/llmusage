@@ -243,6 +243,8 @@ body {
 
 #panel-today .panel-label {
   margin-bottom: 6px;
+  gap: 6px;
+  align-items: center;
 }
 
 /* Today: compact stacked bar + breakdown */
@@ -255,20 +257,9 @@ body {
   border: 0;
   padding: 4px 0;
   color: inherit;
-  cursor: pointer;
   font: inherit;
   text-align: left;
   border-radius: 4px;
-}
-
-.today-total:hover {
-  background: var(--bg-hover);
-}
-
-.today-total-caret {
-  font-size: 9px;
-  color: var(--fg-dim);
-  margin-left: -4px;
 }
 
 .today-detail {
@@ -1596,4 +1587,99 @@ body {
   padding: 4px 6px;
   user-select: all;
   overflow-wrap: anywhere;
+}
+
+/* Today: icon toggles for the quota rings and the rolling burn */
+.today-toggles {
+  margin-left: auto;
+  display: flex;
+  gap: 2px;
+}
+
+.today-icon {
+  background: none;
+  border: 0;
+  padding: 0 3px;
+  color: var(--fg-dim);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 3px;
+  opacity: 0.85;
+}
+
+.today-icon:hover {
+  opacity: 1;
+  background: var(--bg-hover);
+}
+
+.today-icon.active {
+  color: var(--fg-accent);
+  opacity: 1;
+}
+
+/* Tasks: collapsed subtask summary */
+.task-children-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  margin-top: 5px;
+  padding: 2px 0;
+  background: none;
+  border: 0;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 10px;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.task-children-toggle:hover {
+  color: var(--fg);
+  background: var(--bg-hover);
+}
+
+.task-children-toggle .task-caret {
+  font-size: 11px;
+  width: 10px;
+}
+
+/* Tasks: finish-sound toggle */
+.task-detail-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.task-bell {
+  background: none;
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 4px;
+  color: var(--fg-dim);
+  font-size: 10px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+
+.task-bell:hover {
+  color: var(--fg);
+}
+
+/* Off state: keep the bell legible but visibly inactive */
+.task-bell:not(.on) {
+  filter: grayscale(1);
+  opacity: 0.7;
+}
+
+.task-bell.on {
+  color: var(--fg);
+  border-color: var(--amber);
+}
+
+.task-bell-on {
+  font-size: 9px;
+  flex-shrink: 0;
+  line-height: 1;
 }

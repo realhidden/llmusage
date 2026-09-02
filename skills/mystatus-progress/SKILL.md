@@ -76,6 +76,10 @@ Guidelines for the loop:
 
 - One update per 30–120s is plenty; the app derives rate and ETA from the samples,
   so a steady interval gives a smoother ETA chart than bursts.
+- No ETA is shown until two progress reports have landed: the app refuses to
+  project a finish time from the jump between registration and the first report.
+  Push a real `--current` on a regular interval and the ETA appears on the
+  second one; pass `--eta` yourself if the job already knows better.
 - Query the actual job (row counts, file counts, offset files, log tails). If a
   probe fails, push the previous number with a `--note` about the error rather
   than a made-up count.

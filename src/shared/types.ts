@@ -126,6 +126,8 @@ export type TaskProgress = {
   etaAt: string | null;
   /** No update within this many seconds => rendered as stale. */
   ttlSeconds: number;
+  /** Play a sound when this task reaches done/failed. User-set, off by default. */
+  notifyOnFinish: boolean;
   history: TaskPoint[];
 };
 
@@ -138,6 +140,8 @@ export type TaskView = TaskProgress & {
   etaComputed: string | null;
   ratePerSec: number | null;
   stale: boolean;
+  /** Forward progress transitions seen so far; an ETA needs at least 2. */
+  progressReports: number;
   depth: number;
   children: TaskView[];
 };
@@ -190,7 +194,8 @@ export type Invokes = {
   'app:version': { req: {}; res: string };
   'tasks:delete': { req: { id: string }; res: void };
   'tasks:clearFinished': { req: {}; res: void };
-  'tasks:endpoint': { req: {}; res: { enabled: boolean; port: number | null; url: string | null } };
+  'tasks:setNotify': { req: { id: string; enabled: boolean }; res: void };
+  'tasks:endpoint': { req: {}; res: { enabled: boolean; port: number | null; url: string | null; published: boolean } };
 };
 
 export type Events = {
