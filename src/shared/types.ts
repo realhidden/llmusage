@@ -87,6 +87,59 @@ export type StoreSnapshot = {
     byDir: DirLimits[];
     plans: DirPlan[];
   };
+  /** Agent-registered long-running tasks, roots first, children nested. */
+  tasks: TaskView[];
+};
+
+/* ---------------------------------------------------------------- tasks --- */
+
+export type TaskStatus = 'running' | 'paused' | 'done' | 'failed';
+
+/** One sample of a task's progress, used to draw progress + ETA-drift charts. */
+export type TaskPoint = {
+  /** ISO timestamp of the sample. */
+  t: string;
+  current: number;
+  /** 0-100 when a total was known at sample time, else null. */
+  pct: number | null;
+  /** Effective ETA at sample time (agent-supplied or derived), if any. */
+  etaAt: string | null;
+};
+
+/** Progress row registered by an external agent over the local HTTP endpoint. */
+export type TaskProgress = {
+  id: string;
+  title: string;
+  /** id of the parent task, for sub-process hierarchies. */
+  parent: string | null;
+  status: TaskStatus;
+  current: number;
+  total: number | null;
+  /** Free-form item name: 'rows', 'files', 'shards'. */
+  unit: string | null;
+  note: string | null;
+  /** Who registered it, e.g. 'claude-code /Users/x/proj'. */
+  source: string | null;
+  startedAt: string;
+  updatedAt: string;
+  /** Agent-supplied ETA. Wins over the derived one when present. */
+  etaAt: string | null;
+  /** No update within this many seconds => rendered as stale. */
+  ttlSeconds: number;
+  history: TaskPoint[];
+};
+
+/** TaskProgress plus fields derived in main; the renderer only displays. */
+export type TaskView = TaskProgress & {
+  /** 0-100 from own counters, or averaged over children when self has no total. */
+  pct: number | null;
+  /** etaAt ?? etaComputed */
+  etaEffective: string | null;
+  etaComputed: string | null;
+  ratePerSec: number | null;
+  stale: boolean;
+  depth: number;
+  children: TaskView[];
 };
 
 export type DataDirEntry =
@@ -109,6 +162,11 @@ export type Config = {
   dataDirs?: DataDirEntry[];
   priceOverrides?: Record<string, import('./pricing.js').ModelPriceOverride>;
   theme?: 'system' | 'dark' | 'light';
+  /** Local progress endpoint agents push to. */
+  progress?: {
+    enabled?: boolean;
+    port?: number;
+  };
 };
 
 export type UpdateCheckResult = {
@@ -130,6 +188,9 @@ export type Invokes = {
   'app:openUpdate': { req: { url: string }; res: void };
   'app:quit': { req: {}; res: void };
   'app:version': { req: {}; res: string };
+  'tasks:delete': { req: { id: string }; res: void };
+  'tasks:clearFinished': { req: {}; res: void };
+  'tasks:endpoint': { req: {}; res: { enabled: boolean; port: number | null; url: string | null } };
 };
 
 export type Events = {

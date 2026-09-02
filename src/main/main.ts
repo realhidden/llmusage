@@ -12,6 +12,8 @@ import { registerIPC } from './ipc.js';
 import { getIcon, initIcons, type IconState } from './tray-icon.js';
 import { getQuotaForDir } from './quota.js';
 import { checkForUpdate, isGitHubReleaseUrl } from './update.js';
+import { TaskStore } from './tasks/store.js';
+import { startProgressServer, DEFAULT_PORT, type ProgressServer } from './tasks/server.js';
 import { costOfModels } from '../shared/pricing.js';
 import { todayKey } from '../shared/time.js';
 import type { StoreSnapshot, Config, DirLimits, DirPlan, PlanQuota, DataDirEntry } from '../shared/types.js';
@@ -21,6 +23,9 @@ const isDev = process.env.NODE_ENV === 'development';
 
 let store: Store;
 let watcher: Watcher;
+let tasks: TaskStore;
+let progressServer: ProgressServer | null = null;
+let pruneTimer: ReturnType<typeof setInterval> | null = null;
 let mb: ReturnType<typeof menubar> | null = null;
 let lastIconState: IconState = 'idle';
 let blinkTimer: ReturnType<typeof setInterval> | null = null;
@@ -189,6 +194,7 @@ async function decorateSnapshot(snap: StoreSnapshot, config: Config): Promise<St
     })
   );
   snap.limits.plans = plans.filter(p => p.plan != null);
+  snap.tasks = tasks.view();
   return snap;
 }
 
@@ -210,6 +216,24 @@ function estimatePlan(d: DirLimits, config: Config): PlanQuota | null {
     sevenDay,
     sevenDayOpus: null,
   };
+}
+
+/**
+ * Bring up the loopback progress endpoint. A failure here (port unavailable)
+ * must not take the tray app down — usage tracking works without it.
+ */
+async function startProgress(config: Config): Promise<void> {
+  if (config.progress?.enabled === false) return;
+  const envPort = Number(process.env.MYSTATUS_PROGRESS_PORT);
+  const port = Number.isFinite(envPort) && envPort > 0
+    ? envPort
+    : config.progress?.port ?? DEFAULT_PORT;
+  try {
+    progressServer = await startProgressServer({ store: tasks, port, version: app.getVersion() });
+    console.log(`[llmusage] progress endpoint on ${progressServer.url}`);
+  } catch (err) {
+    console.error('[llmusage] progress endpoint failed to start:', err);
+  }
 }
 
 function createWatcher(config: Config): Watcher {
@@ -300,8 +324,11 @@ app.whenReady().then(async () => {
   await initIcons();
 
   store = new Store();
+  tasks = new TaskStore();
+  await tasks.load();
 
   const initConfig = await loadConfig();
+  await startProgress(initConfig);
   watcher = createWatcher(initConfig);
 
   await watcher.coldScan();
@@ -367,6 +394,20 @@ app.whenReady().then(async () => {
     }, 200);
   });
 
+  // Task pushes repaint through the same debounced broadcast as usage changes.
+  tasks.onChange(() => {
+    if (broadcastTimer) return;
+    broadcastTimer = setTimeout(async () => {
+      broadcastTimer = null;
+      await sendSnapshot();
+    }, 200);
+  });
+
+  // Expire finished tasks and re-render staleness/ETA countdowns.
+  pruneTimer = setInterval(() => {
+    if (!tasks.prune()) void sendSnapshot();
+  }, 30_000);
+
   if (initConfig.autoLaunch) {
     app.setLoginItemSettings({ openAtLogin: true });
   }
@@ -413,6 +454,21 @@ app.whenReady().then(async () => {
     },
     'app:quit': async () => app.quit(),
     'app:version': async () => app.getVersion(),
+    'tasks:delete': async (_event, args) => {
+      const { id } = args as { id: string };
+      tasks.remove(id);
+    },
+    'tasks:clearFinished': async () => {
+      tasks.clearFinished();
+    },
+    'tasks:endpoint': async () => {
+      const config = await loadConfig();
+      return {
+        enabled: config.progress?.enabled !== false,
+        port: progressServer?.port ?? null,
+        url: progressServer?.url ?? null,
+      };
+    },
   });
 }).catch((err) => {
   console.error('[llmusage] Fatal startup error:', err);
@@ -422,3 +478,15 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   // Don't quit — menu bar apps stay alive
 });
+
+app.on('before-quit', () => {
+  if (pruneTimer) clearInterval(pruneTimer);
+  void progressServer?.close();
+  tasks?.saveSync();
+});
+
+// A killed app would otherwise leave a stale endpoint.json advertising a port
+// nothing listens on. Route signals through quit so cleanup runs.
+for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) {
+  process.on(signal, () => app.quit());
+}

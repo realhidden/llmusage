@@ -2,6 +2,7 @@ import type { Config, StoreSnapshot, UpdateCheckResult } from '../shared/types.j
 import { renderToday } from './panels/today.js';
 import { renderWeek } from './panels/week.js';
 import { renderSessions } from './panels/sessions.js';
+import { renderTasks } from './panels/tasks.js';
 import { toggleSettings } from './panels/settings.js';
 import { formatCompact, bucketTotal } from './components/token-bar.js';
 import { formatCost } from '../shared/pricing.js';
@@ -93,6 +94,9 @@ function updateHeader(snap: StoreSnapshot): void {
 
 function render(snap: StoreSnapshot): void {
   updateHeader(snap);
+
+  const tasksEl = document.getElementById('panel-tasks')!;
+  renderTasks(tasksEl, snap);
 
   const todayEl = document.getElementById('panel-today')!;
   renderToday(todayEl, snap);

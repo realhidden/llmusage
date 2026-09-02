@@ -6,6 +6,7 @@ macOS menu bar app that surfaces Claude Code usage and live session state.
 
 - Electron (main + renderer) with menubar tray popup
 - Main: `src/main/` — tray, watchers, store, IPC
+- Progress: `src/main/tasks/` — loopback HTTP endpoint agents push task progress to
 - Renderer: `src/renderer/` — popup UI (today, week, sessions, settings panels)
 - Preload: `src/preload/` — context bridge IPC
 - Shared types: `src/shared/types.ts`
@@ -15,6 +16,12 @@ macOS menu bar app that surfaces Claude Code usage and live session state.
 - Read-only against `~/.claude/projects/`. Never write into that tree.
 - All time math in UTC internally; render in local TZ.
 - All amounts are token counts (not cost) unless explicitly labeled `$`.
+- App-owned writable state lives only under `~/.config/llmusage/`
+  (`config.json`, `tasks.json`, `endpoint.json`).
+- The progress endpoint binds `127.0.0.1` only, and writes require
+  `Content-Type: application/json` (blocks browser-page cross-origin writes).
+- Derived task fields (pct, rate, ETA, staleness) are computed in main; the
+  renderer only displays. See [docs/PROGRESS.md](docs/PROGRESS.md).
 
 ## Release workflow
 

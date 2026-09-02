@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# Push long-running task progress to the local mystatus (llmusage) menu bar app.
+# No dependencies beyond bash + curl. Every write is an idempotent upsert.
+set -uo pipefail
+
+ENDPOINT_FILE="${MYSTATUS_ENDPOINT_FILE:-$HOME/.config/llmusage/endpoint.json}"
+DEFAULT_URL="http://127.0.0.1:7377"
+
+usage() {
+  cat <<'USAGE'
+mystatus-progress — report progress of a long-running task to the menu bar
+
+  set <id> [options]     create or update a task (idempotent)
+  done <id> [options]    mark finished (bar snaps to 100%)
+  fail <id> [options]    mark failed
+  pause <id> [options]   mark paused
+  rm <id>                remove the task and its subtasks
+  list                   print all tasks as JSON
+  get <id>               print one task as JSON
+  ping                   exit 0 when mystatus is reachable
+
+Options for set/done/fail/pause:
+  --title TEXT      human-readable name (defaults to the id on create)
+  --current N       items processed so far
+  --total N         items in total; enables % and ETA
+  --unit TEXT       'rows', 'files', 'shards' …
+  --note TEXT       one-line status detail, shown under the bar
+  --parent ID       nest under another task id (sub-process)
+  --eta ISO8601     your own ETA; overrides the rate-derived one
+  --ttl SECONDS     no update within this window => shown stale (default 300)
+  --source TEXT     who is reporting (defaults to agent + cwd)
+  --status STATUS   running | paused | done | failed
+
+Env:
+  MYSTATUS_URL            override the endpoint URL
+  MYSTATUS_ENDPOINT_FILE  override the discovery file
+USAGE
+}
+
+# Resolve the endpoint: env override, then the app's discovery file, then default.
+resolve_url() {
+  if [[ -n "${MYSTATUS_URL:-}" ]]; then
+    printf '%s' "${MYSTATUS_URL%/}"
+    return
+  fi
+  if [[ -r "$ENDPOINT_FILE" ]]; then
+    local url
+    url=$(sed -n 's/.*"url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$ENDPOINT_FILE" | head -1)
+    if [[ -n "$url" ]]; then
+      printf '%s' "${url%/}"
+      return
+    fi
+  fi
+  printf '%s' "$DEFAULT_URL"
+}
+
+URL=$(resolve_url)
+
+die() { printf 'mystatus-progress: %s\n' "$1" >&2; exit 1; }
+
+# Ids land in the URL path: keep them to a safe, stable slug.
+check_id() {
+  [[ -n "${1:-}" ]] || die "missing task id"
+  [[ "$1" =~ ^[A-Za-z0-9._:-]+$ ]] || die "id '$1' must match [A-Za-z0-9._:-]+"
+}
+
+default_source() {
+  printf '%s %s' "${MYSTATUS_AGENT:-agent}" "$PWD"
+}
+
+# Values travel as URL-encoded query params, so no JSON quoting is needed.
+# -G moves the data into the query string; -X POST keeps the method.
+upsert() {
+  local id="$1"; shift
+  check_id "$id"
+  local args=(-fsS -X POST -G -H 'content-type: application/json')
+  local has_source=0
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --title)   args+=(--data-urlencode "title=$2"); shift 2 ;;
+      --current) args+=(--data-urlencode "current=$2"); shift 2 ;;
+      --total)   args+=(--data-urlencode "total=$2"); shift 2 ;;
+      --unit)    args+=(--data-urlencode "unit=$2"); shift 2 ;;
+      --note)    args+=(--data-urlencode "note=$2"); shift 2 ;;
+      --parent)  args+=(--data-urlencode "parent=$2"); shift 2 ;;
+      --eta)     args+=(--data-urlencode "etaAt=$2"); shift 2 ;;
+      --ttl)     args+=(--data-urlencode "ttlSeconds=$2"); shift 2 ;;
+      --status)  args+=(--data-urlencode "status=$2"); shift 2 ;;
+      --started) args+=(--data-urlencode "startedAt=$2"); shift 2 ;;
+      --source)  args+=(--data-urlencode "source=$2"); has_source=1; shift 2 ;;
+      *) die "unknown option '$1'" ;;
+    esac
+  done
+
+  [[ $has_source -eq 1 ]] || args+=(--data-urlencode "source=$(default_source)")
+
+  curl "${args[@]}" "$URL/v1/tasks/$id" >/dev/null \
+    || die "push to $URL failed (is mystatus running?)"
+}
+
+cmd="${1:-}"
+[[ $# -gt 0 ]] && shift
+
+case "$cmd" in
+  set)   upsert "$@" ;;
+  done)  id="${1:-}"; shift || true; upsert "$id" --status done "$@" ;;
+  fail)  id="${1:-}"; shift || true; upsert "$id" --status failed "$@" ;;
+  pause) id="${1:-}"; shift || true; upsert "$id" --status paused "$@" ;;
+  rm)
+    check_id "${1:-}"
+    curl -fsS -X DELETE "$URL/v1/tasks/$1" || die "delete failed"
+    echo
+    ;;
+  list) curl -fsS "$URL/v1/tasks" || die "cannot reach $URL"; echo ;;
+  get)
+    check_id "${1:-}"
+    curl -fsS "$URL/v1/tasks/$1" || die "cannot reach $URL"
+    echo
+    ;;
+  ping) curl -fsS --max-time 2 "$URL/health" >/dev/null || die "not reachable at $URL"; echo "ok $URL" ;;
+  ""|-h|--help|help) usage ;;
+  *) usage; exit 1 ;;
+esac

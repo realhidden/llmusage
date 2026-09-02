@@ -50,6 +50,11 @@ export async function renderSettings(container: HTMLElement, config: Config): Pr
       </div>
 
       <div class="settings-section">
+        <div class="settings-section-label">Progress Endpoint</div>
+        <div id="progress-endpoint" class="settings-endpoint">—</div>
+      </div>
+
+      <div class="settings-section">
         <div class="settings-section-label">Theme</div>
         <div class="settings-segmented" id="theme-segmented">
           <button data-theme="system">System</button>
@@ -65,6 +70,20 @@ export async function renderSettings(container: HTMLElement, config: Config): Pr
   `;
 
   container.prepend(panel);
+
+  // Progress endpoint: agents push here; show the resolved URL for copy/paste.
+  const endpointEl = panel.querySelector('#progress-endpoint')!;
+  window.api.invoke('tasks:endpoint').then((info) => {
+    if (!info.enabled) {
+      endpointEl.textContent = 'disabled';
+      return;
+    }
+    endpointEl.textContent = info.url
+      ? `${info.url}/v1/tasks`
+      : 'not listening — check the console for a port conflict';
+  }).catch(() => {
+    endpointEl.textContent = 'unavailable';
+  });
 
   // Render directory list
   const dirList = panel.querySelector('#dir-list')!;

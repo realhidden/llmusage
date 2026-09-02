@@ -35,6 +35,7 @@ src/
       today.ts
       week.ts
       sessions.ts
+      tasks.ts
     components/
       bar-chart.ts
       session-row.ts
@@ -71,6 +72,9 @@ type Api = {
 | `config:set` | `Partial<Config>` | `Config` |
 | `app:openProject` | `{ cwd: string }` | `void` (opens in Finder via `shell.showItemInFolder`) |
 | `app:quit` | `{}` | `void` |
+| `tasks:delete` | `{ id: string }` | `void` (removes the task and its descendants) |
+| `tasks:clearFinished` | `{}` | `void` |
+| `tasks:endpoint` | `{}` | `{ enabled, port, url }` |
 
 ### Events (main → renderer broadcast)
 
@@ -99,7 +103,16 @@ type StoreSnapshot = {
 };
 ```
 
-`UsageBucket` and `SessionState` are defined in [DATA.md](DATA.md).
+`StoreSnapshot` also carries `tasks: TaskView[]` — agent-registered long-running
+tasks, roots first with children nested. `UsageBucket` and `SessionState` are
+defined in [DATA.md](DATA.md); the task model in [PROGRESS.md](PROGRESS.md).
+
+### Progress endpoint
+
+An HTTP server on `127.0.0.1:7377` (configurable) accepts task upserts from
+external agents; `TaskStore` holds them, persists to
+`~/.config/llmusage/tasks.json`, and feeds `snapshot.tasks` through the same
+debounced broadcast as usage changes. Full contract: [PROGRESS.md](PROGRESS.md).
 
 ### Rolling-window accounting
 
@@ -121,6 +134,10 @@ type StoreSnapshot = {
 - Watcher dies (rare on macOS): re-establish on a 5s backoff, then re-run cold scan diff (offsets stay valid).
 
 ## Persistence
+
+Agent task state (including per-task history) is persisted to
+`~/.config/llmusage/tasks.json` — temp file + rename, debounced 1s — and reloaded
+on boot so restarts do not lose in-flight jobs. Usage aggregation is memory-only:
 
 v1 keeps state in memory only. Cold start re-reads everything. If startup time becomes a problem, add `~/.cache/llmusage/store.json` checkpoint with `{ files: { path: { inode, offset, mtime } }, aggregations: {...} }` and validate on boot.
 

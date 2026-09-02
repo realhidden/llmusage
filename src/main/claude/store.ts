@@ -381,6 +381,8 @@ export class Store {
         byDir: [],
         plans: [],
       },
+      // Filled in by main from the TaskStore; the usage store owns no tasks.
+      tasks: [],
     };
   }
 

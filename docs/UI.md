@@ -13,6 +13,37 @@ Popup window. Frameless, fixed width 360px, height clamped 480–640px (scroll i
 - `⚠ N waiting` only renders when `sessions.active.filter(s => s.state === "waiting-for-input").length > 0`. Click → scroll to Sessions panel.
 - `⚙` opens config panel (Phase 4).
 
+## Section 0 — Tasks (hidden when empty)
+
+Agent-registered long-running work, pushed to the local progress endpoint. This
+panel is first in `#panels` and `hidden` whenever `snapshot.tasks` is empty.
+
+```
+TASKS                    2 running   clear done
+┌──────────────────────────────────────────────┐
+│ ● Orders backfill 2019-2024            15% ▸ │
+│ ███░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ │
+│ 6M / 41.2M rows  started 1h 35m ago          │
+│ eta 05:34 · in 8h 33m                        │
+│ shard 4/8 · last key 2022-07-11              │
+│  │ ● shard 4/8 (2022)                  18% ▸ │
+│  │ ████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ │
+│  │ 927.2K / 5.1M rows  eta 22:16 · in 1h 15m │
+├──────────────────────────────────────────────┤
+│ ● Search Console daily pull  [STALE]     — ▸ │
+│ ● Warehouse vacuum full      [DONE]    100% ▸│
+└──────────────────────────────────────────────┘
+```
+
+- Status dot / bar color: green running, amber paused or stale, red failed, gray done.
+- `%` is `pct`; `—` when neither the task nor its children know a total.
+- Click a row → expands the progress chart, the ETA-drift chart, rate, source and
+  a Remove button. Expansion state is per task id and survives re-renders.
+- Sub-tasks are indented under their parent behind a left rule, with slimmer bars.
+- `clear done` appears only while a `done`/`failed` task is listed.
+
+Charts, retention and staleness rules: [PROGRESS.md](PROGRESS.md).
+
 ## Section 1 — Today
 
 ```

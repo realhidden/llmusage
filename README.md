@@ -8,6 +8,7 @@ Audience: this repo is read and written by LLMs. Optimize docs for retrieval, no
 
 - [docs/PLAN.md](docs/PLAN.md) — scope, phases, acceptance criteria.
 - [docs/DATA.md](docs/DATA.md) — Claude jsonl event schema and aggregation rules.
+- [docs/PROGRESS.md](docs/PROGRESS.md) — agent progress endpoint, task model, TASKS panel.
 - [docs/ARCH.md](docs/ARCH.md) — process model, modules, IPC contract, file layout.
 - [docs/UI.md](docs/UI.md) — popup layout, sections, states.
 - [docs/STACK.md](docs/STACK.md) — exact dependencies and config.
@@ -18,6 +19,30 @@ Audience: this repo is read and written by LLMs. Optimize docs for retrieval, no
 - `npm run build` — produce `.app` bundle via `electron-builder`.
 - `src/main/index.ts` — Electron main process; tray + watchers.
 - `src/renderer/index.html` — popup UI.
+
+## Agent progress reporting
+
+Long-running jobs (data extractions, backfills, batch loops) report progress to a
+loopback endpoint and show up in the TASKS panel at the top of the popup, with
+progress, ETA, and per-task progress/ETA-drift charts.
+
+```bash
+# where to push (also honors $MYSTATUS_URL)
+cat ~/.config/llmusage/endpoint.json
+
+curl -fsS -X POST http://127.0.0.1:7377/v1/tasks/orders-backfill \
+  -H 'content-type: application/json' \
+  -d '{"title":"Orders backfill","current":8200000,"total":41200000,"unit":"rows","note":"shard 4/8"}'
+```
+
+Give any LLM agent the skill so it does this on its own:
+
+```bash
+cp -r skills/mystatus-progress ~/.claude/skills/          # Claude Code
+ln -sf ~/.claude/skills/mystatus-progress/scripts/mystatus-progress /usr/local/bin/
+```
+
+Contract, data model and lifecycle: [docs/PROGRESS.md](docs/PROGRESS.md).
 
 ## Invariants
 
