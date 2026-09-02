@@ -35,12 +35,24 @@ curl -fsS -X POST http://127.0.0.1:7377/v1/tasks/orders-backfill \
   -d '{"title":"Orders backfill","current":8200000,"total":41200000,"unit":"rows","note":"shard 4/8"}'
 ```
 
-Give any LLM agent the skill so it does this on its own:
+Give any LLM agent the skill so it does this on its own. Codex, Gemini CLI and
+opencode read the shared `~/.agents/skills` location, so install there once and
+symlink it into the agents that only scan their own skills dir:
 
 ```bash
-cp -r skills/mystatus-progress ~/.claude/skills/          # Claude Code
-ln -sf ~/.claude/skills/mystatus-progress/scripts/mystatus-progress /usr/local/bin/
+cp -r skills/mystatus-progress ~/.agents/skills/
+
+# agents that read only <home>/skills (Claude Code and forks, qwen)
+for home in ~/.claude ~/.qwen; do
+  mkdir -p "$home/skills"
+  ln -sfn ~/.agents/skills/mystatus-progress "$home/skills/mystatus-progress"
+done
+
+# optional: put the helper on PATH so the bare name works
+ln -sf ~/.agents/skills/mystatus-progress/scripts/mystatus-progress ~/.local/bin/
 ```
+
+Gemini can also link it directly with `gemini skills link <path>`.
 
 Contract, data model and lifecycle: [docs/PROGRESS.md](docs/PROGRESS.md).
 
