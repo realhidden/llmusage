@@ -6,6 +6,10 @@ set -uo pipefail
 ENDPOINT_FILE="${MYSTATUS_ENDPOINT_FILE:-$HOME/.config/llmusage/endpoint.json}"
 DEFAULT_URL="http://127.0.0.1:7377"
 
+# Exit code when the user dismissed the task in the UI: a caller's loop should
+# treat this as "stop pushing", not as a transport failure.
+EXIT_DISMISSED=3
+
 usage() {
   cat <<'USAGE'
 mystatus-progress — report progress of a long-running task to the menu bar
@@ -30,6 +34,12 @@ Options for set/done/fail/pause:
   --ttl SECONDS     no update within this window => shown stale (default 300)
   --source TEXT     who is reporting (defaults to agent + cwd)
   --status STATUS   running | paused | done | failed
+  --reset           start a new run under an id the user dismissed
+
+Exit codes:
+  0  pushed
+  1  could not reach mystatus, or bad usage
+  3  the user dismissed this task in the UI (stop pushing it)
 
 Env:
   MYSTATUS_URL            override the endpoint URL
@@ -73,7 +83,7 @@ default_source() {
 upsert() {
   local id="$1"; shift
   check_id "$id"
-  local args=(-fsS -X POST -G -H 'content-type: application/json')
+  local args=(-sS -X POST -G -H 'content-type: application/json')
   local has_source=0
 
   while [[ $# -gt 0 ]]; do
@@ -89,14 +99,34 @@ upsert() {
       --status)  args+=(--data-urlencode "status=$2"); shift 2 ;;
       --started) args+=(--data-urlencode "startedAt=$2"); shift 2 ;;
       --source)  args+=(--data-urlencode "source=$2"); has_source=1; shift 2 ;;
+      --reset)   args+=(--data-urlencode "reset=1"); shift ;;
       *) die "unknown option '$1'" ;;
     esac
   done
 
   [[ $has_source -eq 1 ]] || args+=(--data-urlencode "source=$(default_source)")
 
-  curl "${args[@]}" "$URL/v1/tasks/$id" >/dev/null \
-    || die "push to $URL failed (is mystatus running?)"
+  local body code
+  body="$(mktemp "${TMPDIR:-/tmp}/mystatus.XXXXXX")"
+  # No -f here: a 409 carries a message worth showing the caller.
+  code="$(curl "${args[@]}" -o "$body" -w '%{http_code}' "$URL/v1/tasks/$id" 2>/dev/null)" || {
+    rm -f "$body"
+    die "push to $URL failed (is mystatus running?)"
+  }
+
+  case "$code" in
+    2*) rm -f "$body" ;;
+    409)
+      sed -n 's/.*"error"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/mystatus-progress: \1/p' "$body" >&2
+      rm -f "$body"
+      exit "$EXIT_DISMISSED"
+      ;;
+    *)
+      sed -n 's/.*"error"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/mystatus-progress: \1/p' "$body" >&2
+      rm -f "$body"
+      die "push to $URL returned HTTP $code"
+      ;;
+  esac
 }
 
 cmd="${1:-}"

@@ -177,6 +177,37 @@ describe('progress endpoint', () => {
     expect(store.raw().map(t => t.id)).toEqual(['f2']);
   });
 
+  it('refuses a push to a dismissed task with 409, then accepts a reset', async () => {
+    await fetch(url('/v1/tasks/dismissed-job'), {
+      method: 'POST', headers: json,
+      body: JSON.stringify({ title: 'Job', current: 100, total: 100, status: 'done' }),
+    });
+    await fetch(url('/v1/tasks/dismissed-job'), { method: 'DELETE' });
+
+    // The agent loop pushes the same finished state again.
+    const res = await fetch(url('/v1/tasks/dismissed-job'), {
+      method: 'POST', headers: json,
+      body: JSON.stringify({ current: 100, status: 'done' }),
+    });
+    expect(res.status).toBe(409);
+    const body = await res.json() as any;
+    expect(body).toMatchObject({ ok: false, dismissed: true });
+    expect(body.error).toMatch(/dismissed in the UI/);
+    expect(store.get('dismissed-job')).toBeUndefined();
+
+    // An explicit reset starts a new run.
+    const reset = await fetch(url('/v1/tasks/dismissed-job?reset=1'), { method: 'POST', headers: json });
+    expect(reset.status).toBe(200);
+    expect(store.get('dismissed-job')).toBeDefined();
+  });
+
+  it('treats reset=0 as false', async () => {
+    await fetch(url('/v1/tasks/reset-flag'), { method: 'POST', headers: json, body: '{"current":5}' });
+    await fetch(url('/v1/tasks/reset-flag'), { method: 'DELETE' });
+    const res = await fetch(url('/v1/tasks/reset-flag?current=5&reset=0'), { method: 'POST', headers: json });
+    expect(res.status).toBe(409);
+  });
+
   it('404s an unknown path and 405s an unsupported method', async () => {
     expect((await fetch(url('/v2/whatever'))).status).toBe(404);
     expect((await fetch(url('/v1/tasks'), { method: 'HEAD' })).status).toBe(405);

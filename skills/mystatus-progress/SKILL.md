@@ -63,7 +63,9 @@ ID=orders-backfill
 while true; do
   done_rows=$(psql -Atqc "select count(*) from orders_staging" mydb) || break
   mystatus-progress set "$ID" --current "$done_rows" \
-    --note "shard $(cat /tmp/orders-shard 2>/dev/null || echo '?')" || true
+    --note "shard $(cat /tmp/orders-shard 2>/dev/null || echo '?')"
+  # Exit code 3 = the user dismissed the row. Stop pushing; do not re-register.
+  [[ $? -eq 3 ]] && break
   [[ "$done_rows" -ge 41200000 ]] && { mystatus-progress done "$ID" --note "41.2M rows"; break; }
   sleep 60
 done
@@ -84,6 +86,10 @@ Guidelines for the loop:
   probe fails, push the previous number with a `--note` about the error rather
   than a made-up count.
 - Always exit the loop after `done`/`fail`, so a finished job stops being polled.
+  A loop that keeps announcing 'done' forever is why finished rows used to
+  reappear after the user cleared them.
+- Stop on exit code 3: the user dismissed that row and the push was refused.
+  Never work around it by re-registering or inventing a new id in the same run.
 - Keep the loop out of the repo — `/tmp` or a scratch dir.
 
 ## 4. Sub-tasks
@@ -111,6 +117,20 @@ mystatus-progress rm   orders-backfill      # also removes its subtasks
 
 Finished tasks stay visible for 30 minutes, then disappear on their own. Remove a
 task explicitly when the user says they are done with it, or when you abandon a job.
+
+### Dismissed tasks stay dismissed
+
+When the user removes a row (or hits `clear done`), that id is suppressed: further
+pushes are refused with HTTP 409 and exit code 3, so a loop that is still running
+cannot put the row back. The suppression lifts when
+
+- the counter restarts lower than where it was dismissed — a genuinely new run of
+  a recurring job reappears on its own, or
+- you pass `--reset` (`reset=true`) to deliberately start a new run under that id, or
+- 12 hours pass.
+
+So a nightly job can keep its stable id. Use `--reset` only when you know the
+user wants that job visible again.
 
 ## 6. Reading status back
 
@@ -149,7 +169,8 @@ curl -fsS -X DELETE "$BASE/v1/tasks?finished=1"               # clear done/faile
 | DELETE | `/v1/tasks?finished=1` | remove all done/failed |
 
 Upsert fields: `title`, `parent`, `status` (`running`/`paused`/`done`/`failed`),
-`current`, `total`, `unit`, `note`, `source`, `startedAt`, `etaAt`, `ttlSeconds`.
+`current`, `total`, `unit`, `note`, `source`, `startedAt`, `etaAt`, `ttlSeconds`,
+`reset`. A push to a dismissed id returns 409 with `{"dismissed": true}`.
 
 ## Don't
 

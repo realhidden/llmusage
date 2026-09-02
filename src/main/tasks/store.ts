@@ -17,11 +17,31 @@ const FINISHED_RETENTION_MS = 30 * 60_000;
 const DEFAULT_TTL_SECONDS = 300;
 /** Hierarchy depth guard: deeper parents are flattened to this level. */
 const MAX_DEPTH = 3;
+/**
+ * How long a dismissal suppresses an id. Long enough that a stuck agent loop
+ * stays silenced for the working day, short enough that a recurring job with a
+ * stable id is never suppressed forever by one dismissal.
+ */
+const DISMISS_TTL_MS = 12 * 60 * 60_000;
 
 const STATUSES: TaskStatus[] = ['running', 'paused', 'done', 'failed'];
 
+/** A dismissed run: pushes at or beyond this position stay suppressed. */
+export type Tombstone = {
+  id: string;
+  /** `current` at the moment it was dismissed. */
+  current: number;
+  at: string;
+};
+
+export type UpsertResult =
+  | { ok: true; task: TaskProgress }
+  | { ok: false; reason: 'dismissed'; dismissedAt: string };
+
 export type TaskUpsert = {
   id: string;
+  /** Clear a dismissal and start a fresh run under the same id. */
+  reset?: boolean;
   title?: string;
   parent?: string | null;
   status?: string;
@@ -37,6 +57,7 @@ export type TaskUpsert = {
 
 export class TaskStore {
   private tasks = new Map<string, TaskProgress>();
+  private dismissed = new Map<string, Tombstone>();
   private listeners: Array<() => void> = [];
   private finishListeners: Array<(task: TaskProgress) => void> = [];
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -69,10 +90,28 @@ export class TaskStore {
     };
   }
 
-  /** Create or patch a task. Only supplied fields are overwritten. */
-  upsert(patch: TaskUpsert, nowMs: number = Date.now()): TaskProgress {
+  /**
+   * Create or patch a task. Only supplied fields are overwritten.
+   *
+   * A dismissed id is not resurrected by the agent loop that was pushing it:
+   * removing a row and having the next heartbeat re-create it is what made
+   * finished tasks reappear. See `isSuppressed` for what counts as a new run.
+   */
+  upsert(patch: TaskUpsert, nowMs: number = Date.now()): UpsertResult {
     const nowISO = new Date(nowMs).toISOString();
     const existing = this.tasks.get(patch.id);
+
+    if (!existing) {
+      const tomb = this.activeTombstone(patch.id, nowMs);
+      if (tomb) {
+        if (patch.reset || incomingCurrent(patch) < tomb.current) {
+          // A counter that went backwards (or an explicit reset) is a new run.
+          this.dismissed.delete(patch.id);
+        } else {
+          return { ok: false, reason: 'dismissed', dismissedAt: tomb.at };
+        }
+      }
+    }
 
     const task: TaskProgress = existing ?? {
       id: patch.id,
@@ -127,7 +166,23 @@ export class TaskStore {
     if (!wasFinished && isFinished(task.status) && task.notifyOnFinish) {
       for (const fn of this.finishListeners) fn(task);
     }
-    return task;
+    return { ok: true, task };
+  }
+
+  /** The live tombstone for an id, dropping it once expired. */
+  private activeTombstone(id: string, nowMs: number): Tombstone | null {
+    const tomb = this.dismissed.get(id);
+    if (!tomb) return null;
+    if (nowMs - Date.parse(tomb.at) > DISMISS_TTL_MS) {
+      this.dismissed.delete(id);
+      return null;
+    }
+    return tomb;
+  }
+
+  /** Ids currently suppressed, for diagnostics. */
+  dismissedIds(): string[] {
+    return [...this.dismissed.keys()];
   }
 
   /** Record a history sample, coalescing heartbeats that carry no movement. */
@@ -162,15 +217,25 @@ export class TaskStore {
     return true;
   }
 
-  /** Remove a task and, recursively, everything parented to it. */
-  remove(id: string): number {
+  /**
+   * Remove a task and, recursively, everything parented to it. `dismiss` leaves
+   * a tombstone so a still-running agent loop cannot push the row straight back;
+   * pass false for an internal removal that should not suppress the id.
+   */
+  remove(id: string, opts: { dismiss?: boolean; nowMs?: number } = {}): number {
     if (!this.tasks.has(id)) return 0;
+    const dismiss = opts.dismiss !== false;
+    const nowISO = new Date(opts.nowMs ?? Date.now()).toISOString();
     let removed = 0;
     const stack = [id];
     while (stack.length > 0) {
       const cur = stack.pop()!;
-      if (!this.tasks.delete(cur)) continue;
+      const task = this.tasks.get(cur);
+      if (!task || !this.tasks.delete(cur)) continue;
       removed++;
+      // Children go too, and are suppressed with the parent: otherwise they
+      // come back as orphan roots on the next push.
+      if (dismiss) this.dismissed.set(cur, { id: cur, current: task.current, at: nowISO });
       for (const t of this.tasks.values()) {
         if (t.parent === cur) stack.push(t.id);
       }
@@ -209,8 +274,14 @@ export class TaskStore {
     for (const t of [...this.tasks.values()]) {
       if (isFinished(t.status) && nowMs - Date.parse(t.updatedAt) > FINISHED_RETENTION_MS) {
         this.tasks.delete(t.id);
+        // Aged-out work is suppressed too: a loop still announcing 'done'
+        // would otherwise re-add the same finished row every retention cycle.
+        this.dismissed.set(t.id, { id: t.id, current: t.current, at: new Date(nowMs).toISOString() });
         changed = true;
       }
+    }
+    for (const tomb of [...this.dismissed.values()]) {
+      if (nowMs - Date.parse(tomb.at) > DISMISS_TTL_MS) this.dismissed.delete(tomb.id);
     }
     if (changed) this.emit();
     return changed;
@@ -268,7 +339,12 @@ export class TaskStore {
   async load(): Promise<void> {
     try {
       const raw = await readFile(this.statePath, 'utf-8');
-      const parsed = JSON.parse(raw) as { tasks?: TaskProgress[] };
+      const parsed = JSON.parse(raw) as { tasks?: TaskProgress[]; dismissed?: Tombstone[] };
+      for (const d of parsed.dismissed ?? []) {
+        if (typeof d?.id === 'string' && typeof d.at === 'string') {
+          this.dismissed.set(d.id, { id: d.id, current: Number(d.current) || 0, at: d.at });
+        }
+      }
       for (const t of parsed.tasks ?? []) {
         if (typeof t?.id !== 'string') continue;
         this.tasks.set(t.id, {
@@ -300,7 +376,7 @@ export class TaskStore {
     try {
       mkdirSync(dirname(this.statePath), { recursive: true });
       const tmp = `${this.statePath}.tmp`;
-      writeFileSync(tmp, JSON.stringify({ tasks: this.raw() }, null, 2), 'utf-8');
+      writeFileSync(tmp, JSON.stringify({ tasks: this.raw(), dismissed: [...this.dismissed.values()] }, null, 2), 'utf-8');
       renameSync(tmp, this.statePath);
     } catch (err) {
       console.error('[llmusage] task state sync save failed:', err);
@@ -308,7 +384,7 @@ export class TaskStore {
   }
 
   async save(): Promise<void> {
-    const payload = JSON.stringify({ tasks: this.raw() }, null, 2);
+    const payload = JSON.stringify({ tasks: this.raw(), dismissed: [...this.dismissed.values()] }, null, 2);
     try {
       await mkdir(dirname(this.statePath), { recursive: true });
       const tmp = `${this.statePath}.tmp`;
@@ -318,6 +394,11 @@ export class TaskStore {
       console.error('[llmusage] task state save failed:', err);
     }
   }
+}
+
+/** `current` a push would land on: explicit value, else 0 for a fresh task. */
+function incomingCurrent(patch: TaskUpsert): number {
+  return patch.current != null && Number.isFinite(patch.current) ? patch.current : 0;
 }
 
 function isFinished(status: TaskStatus): boolean {

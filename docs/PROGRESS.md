@@ -32,7 +32,7 @@ carries it. Note that both instances still share `tasks.json`; run one at a time
 | GET | `/v1/tasks/:id` | one derived task, nested ones included |
 | POST | `/v1/tasks` | upsert, `id` in body |
 | POST | `/v1/tasks/:id` | upsert, id from path |
-| DELETE | `/v1/tasks/:id` | remove task **and its descendants** |
+| DELETE | `/v1/tasks/:id` | remove task **and its descendants**, and suppress the id |
 | DELETE | `/v1/tasks?finished=1` | remove all `done`/`failed` |
 
 Writes accept values as a JSON body, as query params, or both — body wins per
@@ -132,6 +132,18 @@ Two charts per expanded task:
   main plays the completion sound. The flag persists with the task.
 - **Retention** — `done`/`failed` tasks disappear 30 min after their last update.
   The panel's `clear done` button and `DELETE /v1/tasks?finished=1` drop them now.
+- **Dismissal is sticky** — `upsert` is create-or-update, so before tombstones a
+  removed row was re-created by the pushing loop's very next heartbeat: finished
+  tasks reappeared after being cleared, and came back again when dismissed. Now
+  every removal (UI delete, `clear done`, retention prune) leaves a tombstone
+  `{ id, current, at }`, and a push to a tombstoned id is refused with 409
+  `{ dismissed: true }` — including its subtasks, which would otherwise return
+  as orphan roots. Tombstones persist in `tasks.json`.
+
+  A tombstone lifts when the incoming `current` is *lower* than the dismissed
+  one (a recurring job starting a new run), when a push carries `reset: true`,
+  or after 12h — so one dismissal never suppresses a stable id forever. A push
+  at or beyond the dismissed position is the same run, and stays out.
 - **Persistence** — the whole task set (history included) is written to
   `~/.config/llmusage/tasks.json`, debounced 1s, via a temp file + rename. It is
   reloaded on start, so a restart does not lose in-flight jobs.

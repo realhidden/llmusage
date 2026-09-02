@@ -213,7 +213,19 @@ async function handle(req: IncomingMessage, res: ServerResponse, opts: StartOpti
       sendJSON(res, 400, { ok: false, error: "missing 'id'" });
       return;
     }
-    const task = store.upsert(patch);
+    const result = store.upsert(patch);
+    if (!result.ok) {
+      // The user removed this row; a heartbeat must not bring it back.
+      console.warn(`[llmusage] dropped push for dismissed task '${patch.id}'`);
+      sendJSON(res, 409, {
+        ok: false,
+        dismissed: true,
+        dismissedAt: result.dismissedAt,
+        error: `task '${patch.id}' was dismissed in the UI. Stop pushing it, or send reset=true to start a new run.`,
+      });
+      return;
+    }
+    const { task } = result;
     sendJSON(res, 200, { ok: true, task: findInTree(store.view(), task.id) ?? task });
     return;
   }
@@ -266,7 +278,16 @@ export function buildUpsert(
   if (merged.startedAt !== undefined) patch.startedAt = asString(merged.startedAt) ?? undefined;
   if (merged.etaAt !== undefined) patch.etaAt = asString(merged.etaAt);
   if (merged.ttlSeconds !== undefined) patch.ttlSeconds = asNumber(merged.ttlSeconds) ?? undefined;
+  if (merged.reset !== undefined) patch.reset = isTruthy(merged.reset);
   return patch;
+}
+
+/** Query params arrive as strings: '0'/'false'/'' must not read as true. */
+function isTruthy(v: unknown): boolean {
+  if (typeof v === 'boolean') return v;
+  if (typeof v === 'number') return v !== 0;
+  if (typeof v === 'string') return !['', '0', 'false', 'no', 'off'].includes(v.toLowerCase());
+  return false;
 }
 
 function asString(v: unknown): string | null {
