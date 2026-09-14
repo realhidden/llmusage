@@ -53,16 +53,25 @@ function classifyBaseUrl(url: string | undefined | null): ProviderKind {
   return 'unknown';
 }
 
+// Provider detection runs per dir on every snapshot, so the settings read is
+// cached on the same TTL as the quota responses it feeds.
+const settingsCache = new Map<string, { at: number; value: ParentSettings | null }>();
+
 async function readParentSettings(dir: string): Promise<ParentSettings | null> {
+  const hit = settingsCache.get(dir);
+  if (hit && Date.now() - hit.at < TTL_MS) return hit.value;
+
   // Convention: data dir is e.g. <root>/projects, with settings.json one level up
   const parent = dirname(dir);
   const settingsPath = join(parent, 'settings.json');
+  let value: ParentSettings | null = null;
   try {
-    const raw = await readFile(settingsPath, 'utf-8');
-    return JSON.parse(raw) as ParentSettings;
+    value = JSON.parse(await readFile(settingsPath, 'utf-8')) as ParentSettings;
   } catch {
-    return null;
+    value = null;
   }
+  settingsCache.set(dir, { at: Date.now(), value });
+  return value;
 }
 
 export async function detectProvider(dir: string): Promise<ProviderConfig> {
@@ -305,4 +314,5 @@ export async function getQuotaForDir(dir: string): Promise<Quota | null> {
 
 export function clearQuotaCache(): void {
   cache.clear();
+  settingsCache.clear();
 }

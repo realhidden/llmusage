@@ -80,7 +80,7 @@ type Api = {
 
 | channel | payload |
 |---|---|
-| `store:update` | `StoreSnapshot` (debounced 200ms) |
+| `store:update` | `StoreSnapshot` (debounced 1s; only sent while the popup is visible) |
 | `error` | `{ scope: string, message: string }` |
 
 ### `StoreSnapshot` shape
@@ -118,13 +118,17 @@ debounced broadcast as usage changes. Full contract: [PROGRESS.md](PROGRESS.md).
 
 - 5h window: sum tokens from assistant events with `timestamp >= now - 5h`.
 - Weekly: sum from `now - 7d`.
-- Compute on demand from a sorted index by timestamp; do not maintain a rolling buffer.
+- Computed on demand from per-file minute buckets, pruned to 7 days on access.
+  A per-event index grew without bound to answer two queries that tolerate a
+  minute of slop. See [INGEST.md](INGEST.md#retention).
 
 ## Watcher details
 
 - `fs.watch(projectsDir, { recursive: true })` works on macOS.
-- Events are coalesced: maintain `Set<filepath>` of dirty files, flush every 200ms via `setTimeout`.
-- For each dirty file: tail-read per [DATA.md#streaming](DATA.md#streaming--incremental-parsing).
+- Events are coalesced: maintain `Set<filepath>` of dirty files, flush every 500ms via `setTimeout`.
+- For each dirty file: tail-read from the stored byte offset per [INGEST.md](INGEST.md).
+- The first scan runs in the background, newest files first, yielding between
+  them — the tray and popup are usable while it runs.
 - New session files (created during runtime): handled by the same recursive watcher; first emit triggers a full read of the new file.
 
 ## Error policy

@@ -1,3 +1,18 @@
+/**
+ * The normalized event shape every provider parser emits.
+ *
+ * These objects are transient by design: the store folds one into its
+ * aggregates and drops it. Nothing here is retained, so the shape stays flat
+ * and scalar — no message content, no tool results.
+ */
+
+export type RawUsage = {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
+};
+
 export type RawEvent = {
   type: string;
   timestamp?: string;
@@ -6,12 +21,7 @@ export type RawEvent = {
   gitBranch?: string;
   message?: {
     model?: string;
-    usage?: {
-      input_tokens?: number;
-      output_tokens?: number;
-      cache_creation_input_tokens?: number;
-      cache_read_input_tokens?: number;
-    };
+    usage?: RawUsage;
     stop_reason?: string;
   };
   lastPrompt?: string;
@@ -20,33 +30,6 @@ export type RawEvent = {
   isSidechain?: boolean;
   userType?: string;
 };
-
-export function parseLine(line: string): RawEvent | null {
-  try {
-    const obj = JSON.parse(line);
-    if (typeof obj === 'object' && obj !== null && typeof obj.type === 'string') {
-      return obj as RawEvent;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-export function parseBuffer(buffer: string): { events: RawEvent[]; remainder: string } {
-  const lines = buffer.split('\n');
-  const events: RawEvent[] = [];
-  const remainder = lines.pop()!;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const ev = parseLine(trimmed);
-    if (ev) events.push(ev);
-  }
-
-  return { events, remainder };
-}
 
 export function isUsageEvent(ev: RawEvent): ev is RawEvent & {
   type: 'assistant';

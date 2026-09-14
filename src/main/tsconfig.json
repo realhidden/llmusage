@@ -12,5 +12,6 @@
     "lib": ["ES2022"],
     "types": ["node"]
   },
-  "include": ["./", "../shared"]
+  "include": ["./", "../shared"],
+  "exclude": ["**/*.test.ts", "../shared/**/*.test.ts"]
 }

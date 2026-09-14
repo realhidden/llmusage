@@ -140,6 +140,8 @@ function applyTrayState(state: IconState): void {
 
 const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const BROADCAST_DEBOUNCE_MS = 1000;
+const TASK_DEBOUNCE_MS = 250;
 
 async function decorateSnapshot(snap: StoreSnapshot, config: Config): Promise<StoreSnapshot> {
   if (config.limits) {
@@ -240,9 +242,11 @@ function createWatcher(config: Config): Watcher {
   const normalizedDirs = dirsFromConfig(config);
   return new Watcher(store, {
     dirs: normalizedDirs.map(d => d.path),
+    cache: true,
     onError: (scope, message) => {
       console.error(`[${scope}] ${message}`);
     },
+    onProgress: () => scheduleBroadcast(),
   });
 }
 
@@ -251,7 +255,26 @@ async function currentSnapshot(): Promise<StoreSnapshot> {
   return decorateSnapshot(store.snapshot(), config);
 }
 
+function popupVisible(): boolean {
+  const win = mb?.window;
+  return win != null && !win.isDestroyed() && win.isVisible();
+}
+
+/**
+ * Broadcast state.
+ *
+ * The full snapshot is expensive — 100+ day buckets, per-dir quota fan-out,
+ * cost math, then a structured clone across IPC. None of it is observable while
+ * the popup is hidden, which is nearly all the time, so when it is closed we do
+ * only the cheap part: derive session states for the tray.
+ */
 async function sendSnapshot(): Promise<void> {
+  if (!popupVisible()) {
+    const snap = store.snapshot();
+    updateTrayIcon(snap);
+    checkThresholdAlerts(await decorateLimits(snap));
+    return;
+  }
   const snap = await currentSnapshot();
   const win = mb?.window;
   if (win && !win.isDestroyed()) {
@@ -259,6 +282,33 @@ async function sendSnapshot(): Promise<void> {
   }
   updateTrayIcon(snap);
   checkThresholdAlerts(snap);
+}
+
+/** Just the per-dir rolling totals, for threshold alerts while hidden. */
+async function decorateLimits(snap: StoreSnapshot): Promise<StoreSnapshot> {
+  const config = await loadConfig();
+  snap.limits.byDir = dirsFromConfig(config).map(d => ({
+    path: d.path,
+    label: d.label,
+    fiveHourTokens: d.fiveHourTokens,
+    weeklyTokens: d.weeklyTokens,
+    fiveHourUsed: store.rollingByDir(d.path, FIVE_HOURS_MS),
+    weeklyUsed: store.rollingByDir(d.path, WEEK_MS),
+  }));
+  return snap;
+}
+
+/**
+ * Coalesce store and task changes into one broadcast. The old 200 ms cadence
+ * re-ran the whole pipeline several times a second during an active session;
+ * this view does not need to be real time.
+ */
+function scheduleBroadcast(delayMs = BROADCAST_DEBOUNCE_MS): void {
+  if (broadcastTimer) return;
+  broadcastTimer = setTimeout(() => {
+    broadcastTimer = null;
+    void sendSnapshot();
+  }, delayMs);
 }
 
 /** Stable key over the set of normalized dir paths (ignores labels/limits/cost). */
@@ -331,8 +381,6 @@ app.whenReady().then(async () => {
   await startProgress(initConfig);
   watcher = createWatcher(initConfig);
 
-  await watcher.coldScan();
-
   const rendererUrl = isDev
     ? 'http://localhost:5173'
     : `file://${join(__dirname, '..', '..', 'renderer', 'index.html')}`;
@@ -370,6 +418,10 @@ app.whenReady().then(async () => {
     });
   });
 
+  // The popup is hidden most of the time and skips broadcasts while it is;
+  // repaint it with fresh data the moment it opens.
+  mb.on('after-show', () => void sendSnapshot());
+
   mb.on('after-create-window', () => {
     const win = mb?.window;
     if (!win) return;
@@ -386,13 +438,7 @@ app.whenReady().then(async () => {
   });
 
   // Store change -> broadcast + update icon
-  store.onChange(() => {
-    if (broadcastTimer) return;
-    broadcastTimer = setTimeout(async () => {
-      broadcastTimer = null;
-      await sendSnapshot();
-    }, 200);
-  });
+  store.onChange(() => scheduleBroadcast());
 
   // Bell-armed tasks ding when they finish. Sound only — no notification, the
   // panel already carries the outcome.
@@ -401,18 +447,14 @@ app.whenReady().then(async () => {
     playCompletionSound();
   });
 
-  // Task pushes repaint through the same debounced broadcast as usage changes.
-  tasks.onChange(() => {
-    if (broadcastTimer) return;
-    broadcastTimer = setTimeout(async () => {
-      broadcastTimer = null;
-      await sendSnapshot();
-    }, 200);
-  });
+  // Task pushes repaint through the same debounced broadcast as usage changes,
+  // but promptly — a progress bar that lags a second reads as stuck.
+  tasks.onChange(() => scheduleBroadcast(TASK_DEBOUNCE_MS));
 
-  // Expire finished tasks and re-render staleness/ETA countdowns.
+  // Expire finished tasks and re-render staleness/ETA countdowns. Nothing to
+  // repaint while the popup is closed; prune() emits on its own when it drops one.
   pruneTimer = setInterval(() => {
-    if (!tasks.prune()) void sendSnapshot();
+    if (!tasks.prune() && popupVisible()) void sendSnapshot();
   }, 30_000);
 
   if (initConfig.autoLaunch) {
@@ -420,6 +462,13 @@ app.whenReady().then(async () => {
   }
 
   watcher.start();
+
+  // The first scan replays the on-disk aggregate cache, then reads only what
+  // changed — newest files first, yielding between them. Deliberately not
+  // awaited: the tray and popup are usable while it runs.
+  void watcher.coldScan().catch(err => {
+    console.error('[llmusage] cold scan failed:', err);
+  });
 
   registerIPC(ipcMain, {
     'store:snapshot': async () => currentSnapshot(),
@@ -493,7 +542,9 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   if (pruneTimer) clearInterval(pruneTimer);
+  watcher?.stop();
   void progressServer?.close();
+  watcher?.saveCacheSync();
   tasks?.saveSync();
 });
 

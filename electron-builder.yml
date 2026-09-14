@@ -2,8 +2,12 @@ appId: com.thisisdone.llmusage
 productName: llmusage
 directories:
   output: release
+asar: true
+compression: maximum
 files:
   - dist/**
+  - '!dist/**/*.map'
+  - '!dist/**/*.test.js'
   - package.json
   - build/icons/**
 mac:

@@ -7,6 +7,23 @@ import { deriveSessionState } from './state.js';
 import type { Quota } from '../quota.js';
 import type { CodexRateLimits } from '../codex/parser.js';
 
+/**
+ * Oldest day any panel can render: `lastMonth` reaches ~62 days back, so a
+ * little past that is everything the UI will ever ask for. Older days are
+ * dropped rather than aggregated.
+ */
+export const DAY_HORIZON = 75;
+
+/** Longest rolling window the UI queries (the weekly limit bar). */
+const WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Rolling-window samples are bucketed to the minute. The old per-event array
+ * grew without bound — one entry per assistant turn for all history — to answer
+ * two queries that tolerate a minute of slop at the boundary.
+ */
+const MINUTE_MS = 60_000;
+
 function emptyBucket(): TokenBucket {
   return { input: 0, output: 0, cacheCreate: 0, cacheRead: 0 };
 }
@@ -22,39 +39,36 @@ function bucketTotal(b: TokenBucket): number {
   return b.input + b.output + b.cacheCreate + b.cacheRead;
 }
 
-function bucketFromUsage(u: {
-  input_tokens?: number;
-  output_tokens?: number;
-  cache_creation_input_tokens?: number;
-  cache_read_input_tokens?: number;
-}): TokenBucket {
-  return {
-    input: u.input_tokens ?? 0,
-    output: u.output_tokens ?? 0,
-    cacheCreate: u.cache_creation_input_tokens ?? 0,
-    cacheRead: u.cache_read_input_tokens ?? 0,
-  };
-}
-
 function emptyUsageBucket(): UsageBucket {
   return { tokens: emptyBucket(), byModel: {}, byProject: {}, assistantTurns: 0 };
 }
 
-type TimestampedTokens = {
-  ts: number;
-  total: number;
-  dir: string;
-  filePath: string;
+function mergeInto<K>(target: Map<K, TokenBucket>, key: K, from: TokenBucket): void {
+  let b = target.get(key);
+  if (!b) {
+    b = emptyBucket();
+    target.set(key, b);
+  }
+  addBucket(b, from);
+}
+
+/** One day's contribution from a single file. */
+export type DayAgg = {
+  turns: number;
+  byModel: Map<string, TokenBucket>;
+  byProject: Map<string, TokenBucket>;
 };
 
-type StoredFile = {
+/**
+ * Everything retained for one session file.
+ *
+ * This replaces holding the file's parsed events. A 93 MB session that used to
+ * pin ~286 MB of heap now costs a few hundred bytes plus one entry per active
+ * minute in the rolling window.
+ */
+export type FileAgg = {
   dir: string;
-  events: RawEvent[];
-};
-
-export type SessionFileState = {
   sessionId: string;
-  filePath: string;
   cwd: string;
   gitBranch: string;
   firstTs: string;
@@ -67,19 +81,58 @@ export type SessionFileState = {
   lastPrompt: string | null;
   assistantTurns: number;
   lastContextTokens: number;
+  days: Map<string, DayAgg>;
+  /** minute index (epoch ms / 60000) -> tokens, pruned to WINDOW_MS. */
+  window: Map<number, number>;
+};
+
+function emptyFileAgg(dir: string): FileAgg {
+  return {
+    dir,
+    sessionId: '',
+    cwd: '',
+    gitBranch: '',
+    firstTs: '',
+    lastTs: '',
+    models: new Set(),
+    tokens: emptyBucket(),
+    byModel: new Map(),
+    lastEventType: '',
+    lastAssistantStopReason: null,
+    lastPrompt: null,
+    assistantTurns: 0,
+    lastContextTokens: 0,
+    days: new Map(),
+    window: new Map(),
+  };
+}
+
+/** Sink handed to the watcher so parsed events are folded in and dropped. */
+export type FileSink = {
+  event(ev: RawEvent): void;
+  close(): void;
 };
 
 export class Store {
-  private byDay = new Map<string, UsageBucket>();
-  // Per-day, per-dir model token buckets (for per-dir cost estimation)
-  private byDayByDir = new Map<string, Map<string, Record<string, TokenBucket>>>();
-  private bySession = new Map<string, SessionFileState>();
-  private byFile = new Map<string, StoredFile>();
-  // Sorted by timestamp for rolling-window queries
-  private tokenEvents: TimestampedTokens[] = [];
+  private files = new Map<string, FileAgg>();
   private listeners: Array<() => void> = [];
-  // Latest Codex rate limits per directory
   private codexRateLimits = new Map<string, CodexRateLimits>();
+
+  // Global aggregates are derived from `files` and rebuilt only when asked for
+  // after a change — ingest itself stays O(1) per event.
+  private aggDirty = true;
+  private byDay = new Map<string, UsageBucket>();
+  private byDayByDir = new Map<string, Map<string, Record<string, TokenBucket>>>();
+
+  private dayFloor = '';
+
+  constructor() {
+    this.refreshDayFloor();
+  }
+
+  private refreshDayFloor(): void {
+    this.dayFloor = dayKey(new Date(Date.now() - DAY_HORIZON * 86_400_000).toISOString());
+  }
 
   onChange(fn: () => void): () => void {
     this.listeners.push(fn);
@@ -89,283 +142,291 @@ export class Store {
     };
   }
 
-  private emit(): void {
+  emit(): void {
     for (const fn of this.listeners) fn();
   }
 
+  /**
+   * Open a file for streaming ingest. Events are folded into the file's
+   * aggregate as they arrive; the caller never holds more than one.
+   */
+  openFile(filePath: string, dir: string): FileSink {
+    let agg = this.files.get(filePath);
+    if (!agg) {
+      agg = emptyFileAgg(dir);
+      this.files.set(filePath, agg);
+    } else {
+      agg.dir = dir;
+    }
+    const file = agg;
+    let touched = false;
+
+    return {
+      event: (ev) => {
+        if (this.apply(file, ev)) touched = true;
+      },
+      close: () => {
+        if (touched) this.aggDirty = true;
+      },
+    };
+  }
+
+  /** Convenience wrapper for tests and one-shot ingest. */
   ingest(filePath: string, events: RawEvent[], dir: string = '', emit: boolean = true): void {
     if (events.length === 0) return;
-
-    const existing = this.byFile.get(filePath);
-    if (existing) {
-      existing.events.push(...events);
-      existing.dir = dir;
-    } else {
-      this.byFile.set(filePath, { dir, events: [...events] });
-    }
-
-    this.ingestIntoAggregates(filePath, events, dir);
-
+    const sink = this.openFile(filePath, dir);
+    for (const ev of events) sink.event(ev);
+    sink.close();
     if (emit) this.emit();
   }
 
-  private ingestIntoAggregates(filePath: string, events: RawEvent[], dir: string): void {
-    let session = this.bySession.get(filePath);
-
-    for (const ev of events) {
-      if (!ev.timestamp && ev.type !== 'last-prompt') continue;
-
-      if (ev.type === 'last-prompt' && ev.sessionId && ev.lastPrompt != null) {
-        if (session) session.lastPrompt = ev.lastPrompt;
-        continue;
-      }
-
-      if (!ev.timestamp) continue;
-
-      const day = dayKey(ev.timestamp);
-
-      if (!session) {
-        session = {
-          sessionId: ev.sessionId ?? '',
-          filePath,
-          cwd: ev.cwd ?? '',
-          gitBranch: ev.gitBranch ?? '',
-          firstTs: ev.timestamp,
-          lastTs: ev.timestamp,
-          models: new Set(),
-          tokens: emptyBucket(),
-          byModel: new Map(),
-          lastEventType: ev.type,
-          lastAssistantStopReason: null,
-          lastPrompt: null,
-          assistantTurns: 0,
-          lastContextTokens: 0,
-        };
-        this.bySession.set(filePath, session);
-      }
-
-      session.lastTs = ev.timestamp;
-      session.lastEventType = ev.type;
-
-      if (ev.cwd) session.cwd = ev.cwd;
-      if (ev.gitBranch !== undefined) session.gitBranch = ev.gitBranch;
-
-      if (isUsageEvent(ev)) {
-        const model = ev.message.model ?? 'unknown';
-        const usage = ev.message.usage ?? {};
-        const tk = bucketFromUsage(usage);
-
-        session.models.add(model);
-        addBucket(session.tokens, tk);
-
-        let modelBucket = session.byModel.get(model);
-        if (!modelBucket) {
-          modelBucket = emptyBucket();
-          session.byModel.set(model, modelBucket);
-        }
-        addBucket(modelBucket, tk);
-
-        session.assistantTurns++;
-        session.lastAssistantStopReason = ev.message.stop_reason ?? null;
-        session.lastContextTokens = (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
-
-        // Rolling-window index
-        this.tokenEvents.push({
-          ts: new Date(ev.timestamp).getTime(),
-          total: bucketTotal(tk),
-          dir,
-          filePath,
-        });
-
-        // Day aggregation
-        let dayBucket = this.byDay.get(day);
-        if (!dayBucket) {
-          dayBucket = emptyUsageBucket();
-          this.byDay.set(day, dayBucket);
-        }
-        addBucket(dayBucket.tokens, tk);
-        dayBucket.assistantTurns++;
-
-        let dayModel = dayBucket.byModel[model];
-        if (!dayModel) {
-          dayModel = emptyBucket();
-          dayBucket.byModel[model] = dayModel;
-        }
-        addBucket(dayModel, tk);
-
-        // Per-dir day aggregation (lets the main process compute cost gated per dir)
-        let dayDirModels = this.byDayByDir.get(day);
-        if (!dayDirModels) {
-          dayDirModels = new Map();
-          this.byDayByDir.set(day, dayDirModels);
-        }
-        let dirModels = dayDirModels.get(dir);
-        if (!dirModels) {
-          dirModels = {};
-          dayDirModels.set(dir, dirModels);
-        }
-        let dirModelBucket = dirModels[model];
-        if (!dirModelBucket) {
-          dirModelBucket = emptyBucket();
-          dirModels[model] = dirModelBucket;
-        }
-        addBucket(dirModelBucket, tk);
-
-        if (ev.cwd) {
-          const projectCwd = resolveProjectCwd(ev.cwd);
-          let dayProject = dayBucket.byProject[projectCwd];
-          if (!dayProject) {
-            dayProject = emptyBucket();
-            dayBucket.byProject[projectCwd] = dayProject;
-          }
-          addBucket(dayProject, tk);
-        }
-      }
+  /** Returns true if the event changed anything. */
+  private apply(file: FileAgg, ev: RawEvent): boolean {
+    if (ev.type === 'last-prompt') {
+      if (ev.lastPrompt != null) file.lastPrompt = ev.lastPrompt;
+      return true;
     }
+    if (!ev.timestamp) return false;
+
+    if (ev.sessionId && !file.sessionId) file.sessionId = ev.sessionId;
+    if (!file.firstTs) file.firstTs = ev.timestamp;
+    file.lastTs = ev.timestamp;
+    file.lastEventType = ev.type;
+    if (ev.cwd) file.cwd = ev.cwd;
+    if (ev.gitBranch !== undefined) file.gitBranch = ev.gitBranch;
+
+    if (!isUsageEvent(ev)) return true;
+
+    const model = ev.message.model ?? 'unknown';
+    const u = ev.message.usage ?? {};
+    const tk: TokenBucket = {
+      input: u.input_tokens ?? 0,
+      output: u.output_tokens ?? 0,
+      cacheCreate: u.cache_creation_input_tokens ?? 0,
+      cacheRead: u.cache_read_input_tokens ?? 0,
+    };
+
+    file.models.add(model);
+    addBucket(file.tokens, tk);
+    mergeInto(file.byModel, model, tk);
+    file.assistantTurns++;
+    file.lastAssistantStopReason = ev.message.stop_reason ?? null;
+    file.lastContextTokens = tk.input + tk.cacheRead + tk.cacheCreate;
+
+    const ms = Date.parse(ev.timestamp);
+    if (Number.isFinite(ms)) {
+      const minute = Math.floor(ms / MINUTE_MS);
+      file.window.set(minute, (file.window.get(minute) ?? 0) + bucketTotal(tk));
+    }
+
+    const day = dayKey(ev.timestamp);
+    if (day >= this.dayFloor) {
+      let d = file.days.get(day);
+      if (!d) {
+        d = { turns: 0, byModel: new Map(), byProject: new Map() };
+        file.days.set(day, d);
+      }
+      d.turns++;
+      mergeInto(d.byModel, model, tk);
+      if (ev.cwd) mergeInto(d.byProject, resolveProjectCwd(ev.cwd), tk);
+    }
+
+    return true;
+  }
+
+  /** Drop a file's data without notifying listeners — used during scans. */
+  dropFile(filePath: string): boolean {
+    if (!this.files.delete(filePath)) return false;
+    this.aggDirty = true;
+    return true;
   }
 
   removeFile(filePath: string): void {
-    if (!this.byFile.delete(filePath)) return;
-    this.rebuildAggregates();
-    this.emit();
+    if (this.dropFile(filePath)) this.emit();
   }
 
   /** Whether parsed data exists for this file (guards scan-skip caching). */
   hasFile(filePath: string): boolean {
-    return this.byFile.has(filePath);
+    return this.files.has(filePath);
   }
 
-  /**
-   * Drop all data belonging to the given dirs and rebuild aggregates from
-   * retained per-file events — in-memory only, no disk re-reads.
-   */
+  /** Adopt an aggregate rehydrated from the on-disk scan cache. */
+  restoreFile(filePath: string, agg: FileAgg): void {
+    this.files.set(filePath, agg);
+    this.aggDirty = true;
+  }
+
+  fileAgg(filePath: string): FileAgg | undefined {
+    return this.files.get(filePath);
+  }
+
+  entries(): IterableIterator<[string, FileAgg]> {
+    return this.files.entries();
+  }
+
+  /** Drop all data belonging to the given dirs. */
   purgeDirs(dirs: string[]): void {
     const set = new Set(dirs);
     let removed = false;
-    for (const [path, file] of [...this.byFile]) {
+    for (const [path, file] of this.files) {
       if (set.has(file.dir)) {
-        this.byFile.delete(path);
+        this.files.delete(path);
         removed = true;
       }
     }
-    if (!removed) {
-      // Still clear quota state for the removed dirs.
-      for (const d of set) this.codexRateLimits.delete(d);
-      return;
-    }
-    this.rebuildAggregates();
     for (const d of set) this.codexRateLimits.delete(d);
+    if (!removed) return;
+    this.aggDirty = true;
     this.emit();
   }
 
   reset(): void {
-    this.byDay.clear();
-    this.byDayByDir.clear();
-    this.bySession.clear();
-    this.byFile.clear();
-    this.tokenEvents = [];
+    this.files.clear();
+    this.aggDirty = true;
     this.emit();
   }
 
-  private rebuildAggregates(): void {
-    const files = [...this.byFile.entries()];
-    this.byDay.clear();
-    this.byDayByDir.clear();
-    this.bySession.clear();
-    this.tokenEvents = [];
-    for (const [filePath, file] of files) {
-      this.ingestIntoAggregates(filePath, file.events, file.dir);
-    }
-  }
+  /**
+   * Fold per-file day aggregates into the global views. Runs at most once per
+   * change, and costs roughly files x days x models — a few thousand map
+   * operations, versus re-parsing every retained event as the old rebuild did.
+   */
+  private ensureAggregates(): void {
+    if (!this.aggDirty) return;
+    this.aggDirty = false;
+    this.refreshDayFloor();
 
-  /** Model token buckets for a day, keyed by data-directory path. */
-  dayModelByDir(day: string): Map<string, Record<string, TokenBucket>> {
-    return this.byDayByDir.get(day) ?? new Map();
-  }
+    const byDay = new Map<string, UsageBucket>();
+    const byDayByDir = new Map<string, Map<string, Record<string, TokenBucket>>>();
 
-  private rollingWindowTotal(msAgo: number, dir?: string): number {
-    const cutoff = Date.now() - msAgo;
-    let total = 0;
-    for (const te of this.tokenEvents) {
-      if (te.ts < cutoff) continue;
-      if (dir !== undefined && te.dir !== dir) continue;
-      total += te.total;
-    }
-    return total;
-  }
+    for (const file of this.files.values()) {
+      for (const [day, d] of file.days) {
+        if (day < this.dayFloor) {
+          file.days.delete(day);
+          continue;
+        }
 
-  snapshot(): StoreSnapshot {
-    const today = todayKey();
-    const days = last7Days();
-    const bucketFor = (d: string) => this.byDay.get(d) ?? emptyUsageBucket();
-    const mapDays = (range: string[]) => range.map((d) => ({
-      day: d,
-      bucket: bucketFor(d),
-    }));
+        let bucket = byDay.get(day);
+        if (!bucket) {
+          bucket = emptyUsageBucket();
+          byDay.set(day, bucket);
+        }
+        bucket.assistantTurns += d.turns;
 
-    const todayBucket = bucketFor(today);
+        let dirModels = byDayByDir.get(day);
+        if (!dirModels) {
+          dirModels = new Map();
+          byDayByDir.set(day, dirModels);
+        }
+        let models = dirModels.get(file.dir);
+        if (!models) {
+          models = {};
+          dirModels.set(file.dir, models);
+        }
 
-    const last7 = mapDays(days);
+        for (const [model, tk] of d.byModel) {
+          addBucket(bucket.tokens, tk);
+          let m = bucket.byModel[model];
+          if (!m) {
+            m = emptyBucket();
+            bucket.byModel[model] = m;
+          }
+          addBucket(m, tk);
 
-    const now = Date.now();
-    const nowISO = new Date(now).toISOString();
+          let dm = models[model];
+          if (!dm) {
+            dm = emptyBucket();
+            models[model] = dm;
+          }
+          addBucket(dm, tk);
+        }
 
-    const sessions: StoreSnapshot['sessions'] = {
-      active: [],
-      recent: [],
-    };
-
-    const sessionStates: SessionState[] = [];
-
-    for (const s of this.bySession.values()) {
-      const state = deriveSessionState({
-        mtimeMs: new Date(s.lastTs).getTime(),
-        lastEventType: s.lastEventType,
-        lastAssistantStopReason: s.lastAssistantStopReason,
-        nowMs: now,
-      });
-
-      const byModel: Record<string, TokenBucket> = {};
-      for (const [model, bucket] of s.byModel) {
-        byModel[model] = { ...bucket };
-      }
-
-      sessionStates.push({
-        sessionId: s.sessionId,
-        filePath: s.filePath,
-        dir: this.byFile.get(s.filePath)?.dir ?? '',
-        cwd: s.cwd,
-        gitBranch: s.gitBranch,
-        firstTs: s.firstTs,
-        lastTs: s.lastTs,
-        models: [...s.models],
-        tokens: { ...s.tokens },
-        byModel,
-        lastEventType: s.lastEventType as SessionState['lastEventType'],
-        lastAssistantStopReason: s.lastAssistantStopReason,
-        lastPrompt: s.lastPrompt,
-        state,
-        assistantTurns: s.assistantTurns,
-        contextTokens: s.lastContextTokens,
-        cost: null,
-      });
-    }
-
-    sessionStates.sort((a, b) => b.lastTs.localeCompare(a.lastTs));
-
-    for (const s of sessionStates) {
-      if (s.state === 'running' || s.state === 'waiting-for-input') {
-        sessions.active.push(s);
-      } else {
-        if (sessions.recent.length < 5) {
-          sessions.recent.push(s);
+        for (const [project, tk] of d.byProject) {
+          let p = bucket.byProject[project];
+          if (!p) {
+            p = emptyBucket();
+            bucket.byProject[project] = p;
+          }
+          addBucket(p, tk);
         }
       }
     }
 
+    this.byDay = byDay;
+    this.byDayByDir = byDayByDir;
+  }
+
+  /** Model token buckets for a day, keyed by data-directory path. */
+  dayModelByDir(day: string): Map<string, Record<string, TokenBucket>> {
+    this.ensureAggregates();
+    return this.byDayByDir.get(day) ?? new Map();
+  }
+
+  private rollingWindowTotal(msAgo: number, dir?: string): number {
+    const now = Date.now();
+    const cutoff = Math.floor((now - msAgo) / MINUTE_MS);
+    const prune = Math.floor((now - WINDOW_MS) / MINUTE_MS);
+    let total = 0;
+    for (const file of this.files.values()) {
+      const inScope = dir === undefined || file.dir === dir;
+      for (const [minute, tokens] of file.window) {
+        if (minute < prune) {
+          file.window.delete(minute);
+          continue;
+        }
+        if (inScope && minute >= cutoff) total += tokens;
+      }
+    }
+    return total;
+  }
+
+  rollingByDir(dir: string, msAgo: number): number {
+    return this.rollingWindowTotal(msAgo, dir);
+  }
+
+  /**
+   * Session rows shown by the UI: every active session plus the 5 most recent.
+   * Only those are materialized — the old code built a full SessionState, with
+   * copied token buckets, for all ~400 known files on every broadcast.
+   */
+  private sessionViews(now: number): StoreSnapshot['sessions'] {
+    type Candidate = { path: string; file: FileAgg; state: SessionState['state'] };
+    const active: Candidate[] = [];
+    const inactive: Candidate[] = [];
+
+    for (const [path, file] of this.files) {
+      if (!file.lastTs) continue;
+      const state = deriveSessionState({
+        mtimeMs: Date.parse(file.lastTs),
+        lastEventType: file.lastEventType,
+        lastAssistantStopReason: file.lastAssistantStopReason,
+        nowMs: now,
+      });
+      (state === 'running' || state === 'waiting-for-input' ? active : inactive).push({ path, file, state });
+    }
+
+    const byRecency = (a: Candidate, b: Candidate) => b.file.lastTs.localeCompare(a.file.lastTs);
+    active.sort(byRecency);
+    inactive.sort(byRecency);
+
     return {
-      generatedAt: nowISO,
-      today: todayBucket,
+      active: active.map(toSessionState),
+      recent: inactive.slice(0, 5).map(toSessionState),
+    };
+  }
+
+  snapshot(): StoreSnapshot {
+    this.ensureAggregates();
+
+    const bucketFor = (d: string) => this.byDay.get(d) ?? emptyUsageBucket();
+    const mapDays = (range: string[]) => range.map((d) => ({ day: d, bucket: bucketFor(d) }));
+
+    const now = Date.now();
+    const last7 = mapDays(last7Days());
+
+    return {
+      generatedAt: new Date(now).toISOString(),
+      today: bucketFor(todayKey()),
       todayCost: null,
       last7Days: last7,
       usageRanges: {
@@ -374,20 +435,16 @@ export class Store {
         thisMonth: mapDays(monthDays(0)),
         lastMonth: mapDays(monthDays(-1)),
       },
-      sessions,
+      sessions: this.sessionViews(now),
       limits: {
         fiveHourUsed: this.rollingWindowTotal(5 * 60 * 60 * 1000),
-        weeklyUsed: this.rollingWindowTotal(7 * 24 * 60 * 60 * 1000),
+        weeklyUsed: this.rollingWindowTotal(WINDOW_MS),
         byDir: [],
         plans: [],
       },
       // Filled in by main from the TaskStore; the usage store owns no tasks.
       tasks: [],
     };
-  }
-
-  rollingByDir(dir: string, msAgo: number): number {
-    return this.rollingWindowTotal(msAgo, dir);
   }
 
   updateCodexRateLimits(dir: string, limits: CodexRateLimits): void {
@@ -412,4 +469,30 @@ export class Store {
       sevenDayOpus: null,
     };
   }
+}
+
+function toSessionState(c: { path: string; file: FileAgg; state: SessionState['state'] }): SessionState {
+  const { path, file, state } = c;
+  const byModel: Record<string, TokenBucket> = {};
+  for (const [model, bucket] of file.byModel) byModel[model] = { ...bucket };
+
+  return {
+    sessionId: file.sessionId,
+    filePath: path,
+    dir: file.dir,
+    cwd: file.cwd,
+    gitBranch: file.gitBranch,
+    firstTs: file.firstTs,
+    lastTs: file.lastTs,
+    models: [...file.models],
+    tokens: { ...file.tokens },
+    byModel,
+    lastEventType: file.lastEventType as SessionState['lastEventType'],
+    lastAssistantStopReason: file.lastAssistantStopReason,
+    lastPrompt: file.lastPrompt,
+    state,
+    assistantTurns: file.assistantTurns,
+    contextTokens: file.lastContextTokens,
+    cost: null,
+  };
 }

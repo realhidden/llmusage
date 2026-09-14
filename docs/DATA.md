@@ -158,21 +158,26 @@ A day boundary is local midnight (`Intl.DateTimeFormat` with `timeZone: <system>
 
 ## Streaming / incremental parsing
 
-State per file: `{ inode, size, offset, byteHash? }`.
+State per file: `{ inode, size, mtimeMs, offset }`, persisted in the scan cache.
 
 On change:
 
-1. `fs.stat` the file. If `inode` differs from cached → file rotated; reset `offset = 0`.
-2. If `size < offset` → file truncated; reset `offset = 0`.
-3. Read bytes `[offset, size)` via `createReadStream({ start: offset, end: size - 1 })`.
-4. Split on `\n`; the trailing partial line (no `\n`) is **not** consumed — leave `offset` at the start of that partial line.
-5. JSON.parse each complete line in a try/catch; on parse error log and continue.
-6. Apply each event to the store; emit `change`.
+1. `fs.stat` the file. If `inode` differs from cached → file rotated; drop the file's aggregate and reset `offset = 0`.
+2. If `size < offset` → file truncated; same reset.
+3. Stream bytes `[offset, size)` a line at a time — see [INGEST.md](INGEST.md).
+4. The trailing partial line (no `\n`) is **not** consumed; `offset` stays at the start of that partial line, so the next read picks it up whole.
+5. Parse each complete line; on parse error skip it and continue.
+6. Fold each event into the file's aggregate; emit `change`.
+
+Lines are never collected into an array and parsed events are never retained —
+the store holds per-file aggregates only.
 
 The store must be **idempotent on full rescan** — given the same set of events, produce the same aggregations regardless of order (use commutative sums).
 
 ## Cold start
 
-1. Walk `~/.claude/projects/` (one level deep for project dirs, then list `*.jsonl`).
-2. For each file: full read, populate store, set `offset = size`.
-3. Then start watcher.
+1. Replay `~/.config/llmusage/scan-cache.json` so aggregates exist before any file is read.
+2. Walk each configured data dir; skip files untouched for longer than the display horizon (75 days).
+3. Newest first, skip any file whose `(inode, size, mtimeMs)` still matches the cache; read the rest from their stored offset (or from 0 if the file was replaced or truncated).
+4. Forget cached files that no longer exist or have aged out.
+5. Yield between files — the scan runs in the background while the UI is live.

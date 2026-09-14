@@ -147,8 +147,10 @@ Two charts per expanded task:
 - **Persistence** — the whole task set (history included) is written to
   `~/.config/llmusage/tasks.json`, debounced 1s, via a temp file + rename. It is
   reloaded on start, so a restart does not lose in-flight jobs.
-- **Repaint** — task changes go through the same 200ms debounced broadcast as
-  usage changes. A 30s timer prunes finished tasks and refreshes countdowns.
+- **Repaint** — task changes go through the same debounced broadcast as usage
+  changes, at 250ms rather than the 1s used for usage: a progress bar that lags
+  a second reads as stuck. A 30s timer prunes finished tasks and refreshes
+  countdowns, skipping the repaint while the popup is closed.
 
 ## Files
 

@@ -16,14 +16,24 @@ const defaultConfig: Config = {
   ],
 };
 
+/**
+ * The config is read on every snapshot, and snapshots fire on every store
+ * change — so this was a disk read several times a second. The file only ever
+ * changes through saveConfig(), so cache it and let that invalidate.
+ */
+let cached: Config | null = null;
+
 export async function loadConfig(): Promise<Config> {
+  if (cached) return cached;
+  let next: Config;
   try {
     const raw = await readFile(configPath, 'utf-8');
-    const parsed = JSON.parse(raw);
-    return { ...defaultConfig, ...parsed };
+    next = { ...defaultConfig, ...JSON.parse(raw) };
   } catch {
-    return { ...defaultConfig };
+    next = { ...defaultConfig };
   }
+  cached = next;
+  return next;
 }
 
 export async function saveConfig(partial: Partial<Config>): Promise<Config> {
@@ -31,5 +41,11 @@ export async function saveConfig(partial: Partial<Config>): Promise<Config> {
   const merged = { ...current, ...partial };
   await mkdir(configDir, { recursive: true });
   await writeFile(configPath, JSON.stringify(merged, null, 2), 'utf-8');
+  cached = merged;
   return merged;
+}
+
+/** Drop the cached copy so the next read hits disk (tests, external edits). */
+export function invalidateConfig(): void {
+  cached = null;
 }
