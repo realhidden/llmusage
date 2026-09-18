@@ -1,16 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { discoverAgentDirs } from './discover.js';
 
+/** Create a dir and drop a session file `rel` levels below it. */
+async function seed(dir: string, rel: string[] = []): Promise<string> {
+  const leaf = join(dir, ...rel);
+  await mkdir(leaf, { recursive: true });
+  await writeFile(join(leaf, 'session.jsonl'), '{}\n');
+  return dir;
+}
+
 describe('discoverAgentDirs', () => {
   it('finds known agent-data layouts inside home dot-dirs', async () => {
     const home = await mkdtemp(join(tmpdir(), 'llmusage-discover-'));
-    await mkdir(join(home, '.claude', 'projects'), { recursive: true });
-    await mkdir(join(home, '.codex', 'sessions'), { recursive: true });
-    await mkdir(join(home, '.zcode', 'cli', 'rollout'), { recursive: true });
-    await mkdir(join(home, 'not-a-dotdir', 'projects'), { recursive: true });
+    await seed(join(home, '.claude', 'projects'), ['-Users-x-proj']);
+    await seed(join(home, '.codex', 'sessions'), ['2025', '11', '14']);
+    await seed(join(home, '.zcode', 'cli', 'rollout'));
+    await seed(join(home, 'not-a-dotdir', 'projects'), ['-Users-x-proj']);
     await mkdir(join(home, '.empty'), { recursive: true });
 
     const found = await discoverAgentDirs(home);
@@ -32,9 +40,9 @@ describe('discoverAgentDirs', () => {
 
   it('skips junk dot-dirs and prefers the most specific layout', async () => {
     const home = await mkdtemp(join(tmpdir(), 'llmusage-discover-'));
-    await mkdir(join(home, '.npm', 'projects'), { recursive: true });
-    await mkdir(join(home, '.both', 'sessions'), { recursive: true });
-    await mkdir(join(home, '.both', 'cli', 'rollout'), { recursive: true });
+    await seed(join(home, '.npm', 'projects'), ['-Users-x-proj']);
+    await seed(join(home, '.both', 'sessions'), ['2025', '11', '14']);
+    await seed(join(home, '.both', 'cli', 'rollout'));
 
     const found = await discoverAgentDirs(home);
     const paths = found.map(f => f.path);
@@ -44,6 +52,29 @@ describe('discoverAgentDirs', () => {
     const both = found.filter(f => f.path.startsWith(join(home, '.both')));
     expect(both).toHaveLength(1);
     expect(both[0]!.kind).toBe('zcode-like');
+  });
+
+  it('skips a name-matching dir that holds no session files', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'llmusage-discover-'));
+    // Claude Code keeps IDE lock files in `sessions/` next to the real data.
+    const zai = join(home, '.claude-zai');
+    await mkdir(join(zai, 'sessions'), { recursive: true });
+    await writeFile(join(zai, 'sessions', '49301.json'), '{}');
+    await seed(join(zai, 'projects'), ['-Users-x-proj']);
+
+    const found = await discoverAgentDirs(home);
+    const paths = found.map(f => f.path);
+
+    expect(paths).not.toContain(join(zai, 'sessions'));
+    expect(paths).toContain(join(zai, 'projects'));
+  });
+
+  it('does not recurse past the probe depth', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'llmusage-discover-'));
+    await seed(join(home, '.deep', 'projects'), ['a', 'b', 'c', 'd', 'e']);
+
+    const found = await discoverAgentDirs(home);
+    expect(found.map(f => f.path)).not.toContain(join(home, '.deep', 'projects'));
   });
 
   it('returns empty for a missing home', async () => {

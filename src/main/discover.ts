@@ -1,6 +1,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { readdir, stat } from 'node:fs/promises';
+import type { Dirent } from 'node:fs';
 import type { DiscoveredDir } from '../shared/types.js';
 
 /** Dot-dirs that are never agent data — skip without stat-ing. */
@@ -20,6 +21,49 @@ const LAYOUTS: Layout[] = [
   { sub: 'sessions', kind: 'codex-like' },
   { sub: 'projects', kind: 'claude-like' },
 ];
+
+/**
+ * How deep a session file may sit under a candidate root, and how many dirents
+ * the probe may look at before giving up.
+ *
+ *   ~/.claude/projects/<slug>/<uuid>.jsonl          2
+ *   ~/.localqwen/projects/<slug>/chats/<id>.jsonl   3
+ *   ~/.codex/sessions/<yyyy>/<mm>/<dd>/<id>.jsonl   4
+ */
+const PROBE_DEPTH = 4;
+const PROBE_BUDGET = 2000;
+
+/**
+ * A directory name only says what an agent *might* keep there. Claude Code
+ * also creates a `sessions/` dir of IDE lock files next to its `projects/`
+ * data — matching on the name alone claims the empty one and hides the real
+ * data dir. Require at least one `.jsonl` to actually be in there.
+ */
+async function hasSessionData(
+  root: string,
+  depth: number = PROBE_DEPTH,
+  budget: { left: number } = { left: PROBE_BUDGET },
+): Promise<boolean> {
+  let entries: Dirent[];
+  try {
+    entries = await readdir(root, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+
+  const subdirs: string[] = [];
+  for (const entry of entries) {
+    if (budget.left-- <= 0) return false;
+    if (entry.isFile() && entry.name.endsWith('.jsonl')) return true;
+    if (entry.isDirectory() && !entry.name.startsWith('.')) subdirs.push(join(root, entry.name));
+  }
+
+  if (depth <= 1) return false;
+  for (const sub of subdirs) {
+    if (await hasSessionData(sub, depth - 1, budget)) return true;
+  }
+  return false;
+}
 
 /**
  * Scan the home directory for dot-dirs containing known agent-session
@@ -49,13 +93,13 @@ export async function discoverAgentDirs(home: string = homedir()): Promise<Disco
       const candidate = join(dotDir, layout.sub);
       try {
         const cs = await stat(candidate);
-        if (cs.isDirectory()) {
-          found.push({ path: candidate, kind: layout.kind });
-          break; // one hit per dot-dir — most specific layout wins
-        }
+        if (!cs.isDirectory()) continue;
       } catch {
-        // layout not present, try next
+        continue; // layout not present, try next
       }
+      if (!(await hasSessionData(candidate))) continue;
+      found.push({ path: candidate, kind: layout.kind });
+      break; // one hit per dot-dir — most specific layout with data wins
     }
   }
 
