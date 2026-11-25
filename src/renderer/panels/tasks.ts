@@ -1,8 +1,6 @@
 import type { StoreSnapshot, TaskView, TaskPoint } from '../../shared/types.js';
 import { formatCompact } from '../components/token-bar.js';
-
-/** Progress reports needed before an ETA is shown; mirrors main's eta.ts. */
-const MIN_PROGRESS_REPORTS = 2;
+import { escapeHtml } from '../components/html.js';
 
 /** Task ids whose detail (charts, note, source) is expanded. */
 const expanded = new Set<string>();
@@ -119,7 +117,7 @@ function childrenSection(task: TaskView): string {
 function taskDetail(task: TaskView): string {
   const rate = task.ratePerSec != null ? formatRate(task.ratePerSec, task.unit) : null;
   const facts = [
-    rate ? `rate ${rate}` : null,
+    rate ? `rate ${escapeHtml(rate)}` : null,
     etaSource(task),
     task.status === 'running' ? `stale after ${formatRelative(task.ttlSeconds * 1000)} without an update` : null,
     task.source ? escapeHtml(task.source) : null,
@@ -146,8 +144,10 @@ function taskDetail(task: TaskView): string {
 function etaSource(task: TaskView): string | null {
   if (task.etaAt) return 'eta: reported by the job';
   if (task.etaComputed) return 'eta: derived from rate';
-  if (task.total == null) return 'eta: needs a total';
-  return `eta: needs ${MIN_PROGRESS_REPORTS - task.progressReports} more progress report${MIN_PROGRESS_REPORTS - task.progressReports === 1 ? '' : 's'}`;
+  const b = task.etaBlocker;
+  if (b?.reason === 'needs-total') return 'eta: needs a total';
+  if (b?.reason === 'needs-reports') return `eta: needs ${b.missing} more progress report${b.missing === 1 ? '' : 's'}`;
+  return 'eta: no recent progress';
 }
 
 /* ------------------------------------------------------------------- meta --- */
@@ -165,7 +165,7 @@ function metaLine(task: TaskView): string {
       parts.push(left > 0
         ? `eta ${formatClock(eta)} · in ${formatRelative(left)}`
         : `eta ${formatClock(eta)} · overdue`);
-    } else if (task.total != null && task.progressReports < MIN_PROGRESS_REPORTS) {
+    } else if (task.etaBlocker?.reason === 'needs-reports') {
       // One report only measures the gap from registration, which is not a rate.
       parts.push('eta after next update');
     } else {
@@ -252,7 +252,7 @@ function progressChart(task: TaskView): string {
 
   return `
     <div class="task-chart">
-      <div class="task-chart-label">${usePct ? 'progress' : `${task.unit ?? 'items'} (relative)`}
+      <div class="task-chart-label">${usePct ? 'progress' : `${escapeHtml(task.unit ?? 'items')} (relative)`}
         <span>${formatClock(t0)} → ${etaMs != null ? `eta ${formatClock(etaMs)}` : formatClock(tEnd)}</span>
       </div>
       <svg viewBox="0 0 ${CHART_W} ${CHART_H}" preserveAspectRatio="none" class="task-chart-svg">
@@ -347,10 +347,6 @@ function formatClock(ms: number): string {
   if (sameDay) return time;
   const weekday = new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(d);
   return `${weekday} ${time}`;
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function escapeAttr(s: string): string {

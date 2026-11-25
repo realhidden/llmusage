@@ -74,6 +74,8 @@ export type StoreSnapshot = {
     last30Days: Array<{ day: string; bucket: UsageBucket }>;
     thisMonth: Array<{ day: string; bucket: UsageBucket }>;
     lastMonth: Array<{ day: string; bucket: UsageBucket }>;
+    /** One entry per calendar month (`day` is YYYY-MM), oldest first. */
+    last12Months: Array<{ day: string; bucket: UsageBucket }>;
   };
   sessions: {
     active: SessionState[];
@@ -138,6 +140,12 @@ export type TaskView = TaskProgress & {
   /** etaAt ?? etaComputed */
   etaEffective: string | null;
   etaComputed: string | null;
+  /** Why there is no ETA yet; null when there is one. */
+  etaBlocker:
+    | { reason: 'needs-total' }
+    | { reason: 'needs-reports'; missing: number }
+    | { reason: 'no-recent-progress' }
+    | null;
   ratePerSec: number | null;
   stale: boolean;
   /** Forward progress transitions seen so far; an ETA needs at least 2. */

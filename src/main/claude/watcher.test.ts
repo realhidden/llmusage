@@ -127,7 +127,7 @@ describe('Watcher', () => {
     expect(second.snapshot().today.assistantTurns).toBe(2);
   });
 
-  it('forgets files deleted since the cache was written', async () => {
+  it('archives files their agent deleted, and keeps them across restarts', async () => {
     await writeFile(sessionFile(), assistantLine(now(), 20));
     const store = new Store();
     const w = makeWatcher(store);
@@ -136,23 +136,54 @@ describe('Watcher', () => {
 
     await unlink(sessionFile());
     const second = new Store();
-    await makeWatcher(second).coldScan();
-    expect(second.snapshot().today.tokens.output).toBe(0);
+    const w2 = makeWatcher(second);
+    await w2.coldScan();
     expect(second.hasFile(sessionFile())).toBe(false);
+    expect(second.isArchived(sessionFile())).toBe(true);
+    expect(second.snapshot().today.tokens.output).toBe(20);
+    await w2.saveCache();
+
+    // The cache no longer has it; only history does.
+    const third = new Store();
+    await makeWatcher(third).coldScan();
+    expect(third.snapshot().today.tokens.output).toBe(20);
   });
 
-  it('skips files older than the display horizon', async () => {
-    const old = join(projects, 'proj', 'old.jsonl');
-    await writeFile(old, assistantLine(now(), 999));
+  it('reads files past the live horizon once, straight into the archive', async () => {
     const ancient = new Date(Date.now() - 200 * 86_400_000);
+    const old = join(projects, 'proj', 'old.jsonl');
+    await writeFile(old, assistantLine(ancient.toISOString(), 999));
+    await utimes(old, ancient, ancient);
+    await writeFile(sessionFile(), assistantLine(now(), 20));
+
+    const store = new Store();
+    const w = makeWatcher(store);
+    await w.coldScan();
+    expect(store.hasFile(old)).toBe(false);
+    expect(store.isArchived(old)).toBe(true);
+    expect(store.snapshot().today.tokens.output).toBe(20);
+    await w.saveCache();
+
+    // Not re-read on the next launch: same size and mtime, different content.
+    await writeFile(old, assistantLine(ancient.toISOString(), 111));
+    await utimes(old, ancient, ancient);
+    const second = new Store();
+    await makeWatcher(second).coldScan();
+    const month = ancient.toISOString().slice(0, 7);
+    const total = second.snapshot().usageRanges.last12Months.find(m => m.day === month)?.bucket.tokens.output;
+    expect(total).toBe(999);
+  });
+
+  it('without history (CLI), neither archives nor reads old files', async () => {
+    const ancient = new Date(Date.now() - 200 * 86_400_000);
+    const old = join(projects, 'proj', 'old.jsonl');
+    await writeFile(old, assistantLine(ancient.toISOString(), 999));
     await utimes(old, ancient, ancient);
 
-    await writeFile(sessionFile(), assistantLine(now(), 20));
     const store = new Store();
-    await makeWatcher(store).coldScan();
-
+    await makeWatcher(store, false).coldScan();
     expect(store.hasFile(old)).toBe(false);
-    expect(store.snapshot().today.tokens.output).toBe(20);
+    expect(store.isArchived(old)).toBe(false);
   });
 
   it('purges a dir when it leaves the configured set', async () => {
@@ -176,5 +207,16 @@ describe('Watcher', () => {
     });
     await expect(w.coldScan()).resolves.toBeUndefined();
     expect(store.snapshot().today.tokens.output).toBe(0);
+  });
+});
+
+describe('history file', () => {
+  it('sets an unreadable history aside instead of overwriting it', async () => {
+    const { loadHistory } = await import('./history.js');
+    const { readdir } = await import('node:fs/promises');
+    const path = join(root, 'history.json');
+    await writeFile(path, '{"version":1,"files":{trunc');
+    expect((await loadHistory(path)).size).toBe(0);
+    expect((await readdir(root)).some(f => f.startsWith('history.json.unreadable-'))).toBe(true);
   });
 });

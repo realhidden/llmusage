@@ -2,8 +2,22 @@ import { describe, expect, it } from 'vitest';
 import { priceForModel, effectivePrice, costOf, costOfModels, formatCost } from './pricing.js';
 
 describe('pricing', () => {
+  it('matches Claude prices by version, not just family', () => {
+    expect(priceForModel('claude-opus-5-5')).toEqual({ input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 });
+    expect(priceForModel('claude-opus-4-6').output).toBe(25);
+    expect(priceForModel('claude-opus-4-1-20250805').output).toBe(75);
+    expect(priceForModel('claude-sonnet-5-5').cacheRead).toBe(0.1);
+    expect(priceForModel('claude-haiku-5-5').input).toBe(0.1);
+    expect(priceForModel('claude-haiku-4-5').input).toBe(1);
+  });
+
+  it('prices local models at zero, including proxy aliases that say "opus"', () => {
+    for (const m of ['hidden/coder-opus', 'qwen3.8-flash-next-iq3_xxs', 'Qwen3.8-27B-UD-Q3_K_XL.gguf', 'qwen2.5:1.5b']) {
+      expect(priceForModel(m).input, m).toBe(0);
+    }
+  });
+
   it('matches model prices by family', () => {
-    expect(priceForModel('claude-opus-4-6').output).toBe(75);
     expect(priceForModel('claude-sonnet-4-6').input).toBe(3);
     expect(priceForModel('gpt-4o-mini').input).toBe(2.5);
     expect(priceForModel('glm-4.5-air').input).toBe(0.5);

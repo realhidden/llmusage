@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { providerOf } from './jsonl/parser.js';
 
 const execFileP = promisify(execFile);
 
@@ -293,10 +294,18 @@ export async function getQuotaFor(p: ProviderConfig): Promise<Quota | null> {
   if (cached && now - cached.at < TTL_MS) return cached.value;
   const existing = inflight.get(key);
   if (existing) return existing;
+  // Never rejects: a throw (a malformed base URL, say) used to stay in
+  // `inflight` forever and fail every snapshot after it.
   const promise = (async () => {
-    const value = await fetchForConfig(p);
+    let value: Quota | null = null;
+    try {
+      value = await fetchForConfig(p);
+    } catch (err) {
+      console.error('[llmusage] quota fetch failed:', err);
+    } finally {
+      inflight.delete(key);
+    }
     cache.set(key, { at: Date.now(), value });
-    inflight.delete(key);
     return value;
   })();
   inflight.set(key, promise);
@@ -304,15 +313,11 @@ export async function getQuotaFor(p: ProviderConfig): Promise<Quota | null> {
 }
 
 export async function getQuotaForDir(dir: string): Promise<Quota | null> {
-  // Codex has its own rate-limit reporting in session events, not via API
-  if (dir.includes('.codex/sessions') || dir.includes('.codex\\sessions')) return null;
-  // Local Qwen has no remote quota API
-  if (dir.includes('.localqwen/projects') || dir.includes('.localqwen\\projects')) return null;
+  // Codex reports rate limits in its session events; local Qwen has no quota
+  // API; zcode has no settings.json, so detection would fall back to the
+  // Claude account and show its quota on the zcode row.
+  if (providerOf(dir) !== 'claude') return null;
   const provider = await detectProvider(dir);
   return getQuotaFor(provider);
 }
 
-export function clearQuotaCache(): void {
-  cache.clear();
-  settingsCache.clear();
-}

@@ -104,9 +104,11 @@ at once — the job knows better than the observer.
 ## History and charts
 
 Each upsert appends a `TaskPoint` (`t`, `current`, `pct`, `etaAt` at that moment).
-Samples that do not move `current` within 60s overwrite the tail instead of
-growing history; a stalled job past that gap does keep points, so the flat stretch
-stays visible. Capped at 240 points per task, oldest dropped.
+The point where `current` last changed keeps its timestamp. After it, samples
+that do not move `current` keep one fixed point per 60s plus a tail that
+heartbeats refresh, so a stall charts as a step and a flat line rather than a
+ramp up to "now". `etaAt` is projected after the point is added. Capped at 240
+points per task, oldest dropped.
 
 Two charts per expanded task:
 
@@ -121,17 +123,21 @@ Two charts per expanded task:
 ## Lifecycle
 
 - **Hierarchy** — `parent` is a task id. A task whose parent is unknown (deleted,
-  or never registered) renders as a root. Cycles are broken by a visited set.
+  or never registered) renders as a root. A task cannot be its own parent, and
+  tasks reachable only through a cycle render as roots, so nothing is invisible.
 - **Staleness** — a running task with no heartbeat within `ttlSeconds` (default
   300s, set per task by the agent) dims and shows a STALE tag whose tooltip
   gives the actual gap and the window; the expanded detail states the rule as
-  "stale after 5m without an update". It is never deleted for being stale.
+  "stale after 5m without an update". A running task silent for 24h is treated
+  as abandoned and expires (with a tombstone).
 - **Finish sound** — `notifyOnFinish` is per task, off by default, and only the
   user sets it (the bell in the expanded detail; `tasks:setNotify`). When an
   armed task transitions to `done`/`failed`, `TaskStore.onFinish` fires once and
   main plays the completion sound. The flag persists with the task.
 - **Retention** — `done`/`failed` tasks disappear 30 min after their last update.
   The panel's `clear done` button and `DELETE /v1/tasks?finished=1` drop them now.
+  At most 200 tasks are kept (oldest update expires first), and `title`, `note`,
+  `unit` and `source` are truncated, so a runaway loop cannot bloat `tasks.json`.
 - **Dismissal is sticky** — `upsert` is create-or-update, so before tombstones a
   removed row was re-created by the pushing loop's very next heartbeat: finished
   tasks reappeared after being cleared, and came back again when dismissed. Now
@@ -143,7 +149,8 @@ Two charts per expanded task:
   A tombstone lifts when the incoming `current` is *lower* than the dismissed
   one (a recurring job starting a new run), when a push carries `reset: true`,
   or after 12h — so one dismissal never suppresses a stable id forever. A push
-  at or beyond the dismissed position is the same run, and stays out.
+  at or beyond the dismissed position is the same run, and stays out; so is a
+  push with no `current` at all (`done --note …`, a bare heartbeat).
 - **Persistence** — the whole task set (history included) is written to
   `~/.config/llmusage/tasks.json`, debounced 1s, via a temp file + rename. It is
   reloaded on start, so a restart does not lose in-flight jobs.

@@ -113,6 +113,20 @@ describe('progress endpoint', () => {
 
   const url = (p: string) => `${server.url}${p}`;
 
+  it('rejects a foreign Host header (DNS rebinding) and malformed ids', async () => {
+    const { request } = await import('node:http');
+    const status = await new Promise<number>((resolve, reject) => {
+      const req = request(url('/v1/tasks'), { headers: { host: 'evil.example:80' } }, (res) => {
+        res.resume();
+        resolve(res.statusCode ?? 0);
+      });
+      req.on('error', reject);
+      req.end();
+    });
+    expect(status).toBe(403);
+    expect((await fetch(url('/v1/tasks/%E0'))).status).toBe(400);
+  });
+
   it('reports health', async () => {
     const res = await fetch(url('/health'));
     expect(res.status).toBe(200);

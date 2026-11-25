@@ -177,7 +177,7 @@ The store must be **idempotent on full rescan** — given the same set of events
 ## Cold start
 
 1. Replay `~/.config/llmusage/scan-cache.json` so aggregates exist before any file is read.
-2. Walk each configured data dir; skip files untouched for longer than the display horizon (75 days).
+2. Walk each configured data dir. Files untouched for 80 days are not kept live: their per-day usage is archived to `history.json` (see INGEST.md#history), and old files never seen before are read once into it.
 3. Newest first, skip any file whose `(inode, size, mtimeMs)` still matches the cache; read the rest from their stored offset (or from 0 if the file was replaced or truncated).
 4. Forget cached files that no longer exist or have aged out.
 5. Yield between files — the scan runs in the background while the UI is live.

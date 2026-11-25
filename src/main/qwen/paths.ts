@@ -1,10 +1,5 @@
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { readdir, stat } from 'node:fs/promises';
-
-export function projectsDir(): string {
-  return join(homedir(), '.localqwen', 'projects');
-}
 
 export async function listSessionFiles(dir: string): Promise<string[]> {
   const files: string[] = [];

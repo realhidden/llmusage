@@ -25,10 +25,6 @@ export type RawEvent = {
     stop_reason?: string;
   };
   lastPrompt?: string;
-  uuid?: string;
-  parentUuid?: string | null;
-  isSidechain?: boolean;
-  userType?: string;
 };
 
 export function isUsageEvent(ev: RawEvent): ev is RawEvent & {

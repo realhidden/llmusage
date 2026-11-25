@@ -23,13 +23,19 @@ backend move to another host process.
 - All time math in UTC internally; render in local TZ.
 - All amounts are token counts (not cost) unless explicitly labeled `$`.
 - App-owned writable state lives only under `~/.config/llmusage/`
-  (`config.json`, `tasks.json`, `endpoint.json`, `scan-cache.json`).
+  (`config.json`, `tasks.json`, `endpoint.json`, `scan-cache.json`,
+  `history.json`).
+- `history.json` is the only copy of usage whose session files agents have
+  deleted. It is not a cache: never wipe it on a version bump, and never
+  overwrite one that failed to parse.
 - The store never retains parsed session events — only per-file aggregates.
   Anything that needs raw events must stream them, not collect them.
 - `scan-cache.json` pairs each file's aggregate with the byte offset it covers.
   Never adjust one without the other; drop the entry instead.
-- The progress endpoint binds `127.0.0.1` only, and writes require
-  `Content-Type: application/json` (blocks browser-page cross-origin writes).
+- The progress endpoint binds `127.0.0.1` only, writes require
+  `Content-Type: application/json` (blocks browser-page cross-origin writes),
+  and every request needs a `127.0.0.1`/`localhost` Host header (blocks DNS
+  rebinding).
 - Derived task fields (pct, rate, ETA, staleness) are computed in main; the
   renderer only displays. See [docs/PROGRESS.md](docs/PROGRESS.md).
 
@@ -55,7 +61,7 @@ The GitHub Actions workflow (`.github/workflows/release.yml`) builds macOS DMG/Z
 
 ## Tech stack
 
-- Electron 41 + TypeScript 6
+- Electron 45 + TypeScript 7
 - Vite 8 for renderer bundling
 - electron-builder for packaging
 - menubar for tray-anchored popup

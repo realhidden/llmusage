@@ -1,16 +1,16 @@
 import type { StoreSnapshot } from '../../shared/types.js';
 import { formatCompact, bucketTotal, modelColor, modelShort } from '../components/token-bar.js';
-
-const MODEL_ORDER = ['claude-opus-4-7', 'glm-5.1', 'claude-sonnet-4-6', 'glm-5-turbo', 'claude-haiku-4-5', 'glm-4.5-air'];
+import { escapeHtml } from '../components/html.js';
 
 const MAX_BAR_PX = 64;
-type RangeKey = 'last7Days' | 'last30Days' | 'thisMonth' | 'lastMonth';
+type RangeKey = 'last7Days' | 'last30Days' | 'thisMonth' | 'lastMonth' | 'last12Months';
 
 const RANGE_LABELS: Record<RangeKey, string> = {
   last7Days: '7d',
   last30Days: '30d',
   thisMonth: 'This month',
   lastMonth: 'Last month',
+  last12Months: '12 mo',
 };
 
 let selectedRange: RangeKey = 'last7Days';
@@ -40,6 +40,9 @@ export function renderWeek(container: HTMLElement, snapshot: StoreSnapshot): voi
     last7Days: snapshot.last7Days,
   };
   const days = ranges[selectedRange] ?? snapshot.last7Days;
+  // The 12-month range has one entry per month, keyed YYYY-MM.
+  const monthly = selectedRange === 'last12Months';
+  const unit = monthly ? 'mo' : 'day';
   const totals = days.map(d => bucketTotal(d.bucket.tokens));
   const maxTotal = Math.max(...totals, 1);
   const weekTotal = totals.reduce((sum, n) => sum + n, 0);
@@ -55,12 +58,16 @@ export function renderWeek(container: HTMLElement, snapshot: StoreSnapshot): voi
     }
   }
 
+  // Stack segments in one order for the whole range, largest first, so a
+  // model keeps its position from bar to bar.
+  const rank = new Map([...byModel.entries()].sort((a, b) => b[1] - a[1]).map(([m], i) => [m, i]));
+
   if (summaryEl) {
     const peakDay = peakIndex >= 0 && peak > 0 ? shortDate(days[peakIndex]!.day) : 'none';
     summaryEl.innerHTML = `
       <div class="week-summary-main">${formatCompact(weekTotal)} tok</div>
       <div class="week-summary-grid">
-        <span><b>${formatCompact(dailyAvg)}</b> avg/day</span>
+        <span><b>${formatCompact(dailyAvg)}</b> avg/${unit}</span>
         <span><b>${formatCompact(peak)}</b> peak ${peakDay}</span>
         <span><b>${activeDays}</b>/${days.length} active</span>
       </div>
@@ -86,11 +93,7 @@ export function renderWeek(container: HTMLElement, snapshot: StoreSnapshot): voi
     if (total > 0) {
       const models = Object.entries(bucket.byModel)
         .filter(([, b]) => bucketTotal(b) > 0)
-        .sort((a, b) => {
-          const ai = MODEL_ORDER.indexOf(a[0]);
-          const bi = MODEL_ORDER.indexOf(b[0]);
-          return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-        });
+        .sort((a, b) => (rank.get(a[0]) ?? 99) - (rank.get(b[0]) ?? 99));
 
       const lines: string[] = [`${day} — ${formatCompact(total)} tok`];
       for (const [model, modelBucket] of models) {
@@ -132,19 +135,25 @@ export function renderWeek(container: HTMLElement, snapshot: StoreSnapshot): voi
       : legend.map(([model, total]) => `
           <span class="week-legend-item">
             <span class="model-dot" style="background:${modelColor(model)}"></span>
-            ${modelShort(model)} ${formatCompact(total)}
+            ${escapeHtml(modelShort(model))} ${formatCompact(total)}
           </span>
         `).join('');
   }
 }
 
+/** Range entries are days (YYYY-MM-DD), or months (YYYY-MM) in the 12-month range. */
+const isMonth = (key: string) => key.length === 7;
+const toDate = (key: string) => new Date((isMonth(key) ? key + '-01' : key) + 'T12:00:00');
+
 function shortDate(day: string): string {
-  const d = new Date(day + 'T12:00:00');
+  const d = toDate(day);
+  if (isMonth(day)) return new Intl.DateTimeFormat(undefined, { month: 'short', year: '2-digit' }).format(d);
   return new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(d);
 }
 
 function formatDayLabel(day: string, count: number): string {
-  const d = new Date(day + 'T12:00:00');
+  const d = toDate(day);
+  if (isMonth(day)) return new Intl.DateTimeFormat(undefined, { month: 'narrow' }).format(d);
   if (count <= 7) {
     return new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(d).slice(0, 2);
   }

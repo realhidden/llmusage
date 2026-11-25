@@ -1,6 +1,8 @@
 import { basename, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import type { Config, DataDirEntry } from '../../shared/types.js';
+import { providerOf } from '../jsonl/parser.js';
+import { DEFAULT_DATA_DIRS } from '../config.js';
 
 export type NormalizedDir = {
   path: string;
@@ -10,20 +12,20 @@ export type NormalizedDir = {
   estimateCost?: boolean;
 };
 
+/**
+ * `~/` expanded and trailing separators dropped. Paths are map keys
+ * throughout: `…/projects/` would key every file a second time.
+ */
 function expandTilde(p: string): string {
-  if (p.startsWith('~/')) return homedir() + p.slice(1);
-  return p;
+  const expanded = p.startsWith('~/') ? homedir() + p.slice(1) : p;
+  return expanded.length > 1 ? expanded.replace(/[\\/]+$/, '') : expanded;
 }
 
 function defaultLabel(path: string): string {
-  // ~/.claude/projects -> claude
-  // ~/.glm/projects   -> glm
-  // ~/.codex/sessions -> codex
-  // ~/.localqwen/projects -> qwen
-  // ~/.zcode/cli/rollout -> zcode
-  if (path.includes('.codex/sessions') || path.includes('.codex\\sessions')) return 'codex';
-  if (path.includes('.localqwen/projects') || path.includes('.localqwen\\projects')) return 'qwen';
-  if (path.includes('.zcode/cli/rollout') || path.includes('.zcode\\cli\\rollout')) return 'zcode';
+  // ~/.codex/sessions -> codex, ~/.localqwen/projects -> qwen, ~/.zcode/cli/rollout -> zcode;
+  // any other Claude-style dir is named after its dot-dir: ~/.claude-zai/projects -> claude-zai
+  const provider = providerOf(path);
+  if (provider !== 'claude') return provider;
   const parent = basename(dirname(path));
   if (parent && parent.startsWith('.')) return parent.slice(1);
   if (parent) return parent;
@@ -46,11 +48,6 @@ export function normalizeDir(entry: DataDirEntry): NormalizedDir {
 }
 
 export function dirsFromConfig(config: Config): NormalizedDir[] {
-  const entries = config.dataDirs ?? [
-    `${homedir()}/.claude/projects`,
-    `${homedir()}/.codex/sessions`,
-    `${homedir()}/.localqwen/projects`,
-    `${homedir()}/.zcode/cli/rollout`,
-  ];
+  const entries = config.dataDirs ?? DEFAULT_DATA_DIRS;
   return entries.map(normalizeDir);
 }

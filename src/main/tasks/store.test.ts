@@ -59,14 +59,32 @@ describe('TaskStore.upsert', () => {
     s.upsert({ id: 'a', current: 5, total: 100 }, min(0));
     s.upsert({ id: 'a', current: 5 }, min(0) + 5_000);
     s.upsert({ id: 'a', current: 5 }, min(0) + 10_000);
-    expect(s.get('a')!.history).toHaveLength(1);
+    // Where 5 was reached, plus one tail the heartbeats keep refreshing.
+    expect(s.get('a')!.history.map(p => p.t)).toEqual([new Date(min(0)).toISOString(), new Date(min(0) + 10_000).toISOString()]);
 
     s.upsert({ id: 'a', current: 6 }, min(0) + 15_000);
-    expect(s.get('a')!.history).toHaveLength(2);
-
-    // Same position but past the sample gap: keeps a point so stalls are visible
-    s.upsert({ id: 'a', current: 6 }, min(2) + 15_000);
     expect(s.get('a')!.history).toHaveLength(3);
+    s.flushTimers();
+  });
+
+  it('charts a stall as a step and a flat line, not a ramp to now', async () => {
+    const s = await tempStore();
+    s.upsert({ id: 'a', current: 5, total: 100 }, min(0));
+    s.upsert({ id: 'a', current: 6 }, min(0) + 15_000);
+    for (let t = 45_000; t <= 195_000; t += 30_000) s.upsert({ id: 'a', current: 6 }, min(0) + t);
+
+    const ts = s.get('a')!.history.map(p => (Date.parse(p.t) - min(0)) / 1000);
+    // 6 was reached at 15s and keeps that time; then one point a minute plus a live tail.
+    expect(ts).toEqual([0, 15, 75, 135, 195]);
+    s.flushTimers();
+  });
+
+  it('keeps a dismissed task down when a push carries no current', async () => {
+    const s = await tempStore();
+    s.upsert({ id: 'a', current: 50, total: 100 }, min(0));
+    s.remove('a', { nowMs: min(1) });
+    expect(s.upsert({ id: 'a', status: 'done', note: 'finished' }, min(2)).ok).toBe(false);
+    expect(s.upsert({ id: 'a', current: 1 }, min(3)).ok).toBe(true);
     s.flushTimers();
   });
 });

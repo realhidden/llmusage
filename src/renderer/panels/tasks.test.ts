@@ -8,7 +8,7 @@ function task(over: Partial<TaskView> = {}): TaskView {
     unit: null, note: null, source: null, startedAt: '2026-09-02T10:00:00Z',
     updatedAt: '2026-09-02T10:00:00Z', etaAt: null, ttlSeconds: 300,
     notifyOnFinish: false, history: [],
-    pct: null, etaEffective: null, etaComputed: null, ratePerSec: null,
+    pct: null, etaEffective: null, etaComputed: null, etaBlocker: null, ratePerSec: null,
     progressReports: 0, stale: false, depth: 0, children: [], ...over,
   };
 }

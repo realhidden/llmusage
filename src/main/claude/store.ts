@@ -1,18 +1,14 @@
 import type { TokenBucket, UsageBucket, SessionState, StoreSnapshot } from '../../shared/types.js';
 import type { RawEvent } from './parser.js';
 import { isUsageEvent } from './parser.js';
-import { dayKey, todayKey, last7Days, lastNDays, monthDays } from '../../shared/time.js';
+import { dayKey, todayKey, last7Days, lastNDays, monthDays, lastNMonths } from '../../shared/time.js';
 import { resolveProjectCwd } from '../../shared/paths.js';
 import { deriveSessionState } from './state.js';
 import type { Quota } from '../quota.js';
 import type { CodexRateLimits } from '../codex/parser.js';
-
-/**
- * Oldest day any panel can render: `lastMonth` reaches ~62 days back, so a
- * little past that is everything the UI will ever ask for. Older days are
- * dropped rather than aggregated.
- */
-export const DAY_HORIZON = 75;
+import type { ArchivedFile } from './history.js';
+import type { ParserState } from '../jsonl/parser.js';
+import { INGEST_VERSION } from './cache.js';
 
 /** Longest rolling window the UI queries (the weekly limit bar). */
 const WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
@@ -41,6 +37,25 @@ function bucketTotal(b: TokenBucket): number {
 
 function emptyUsageBucket(): UsageBucket {
   return { tokens: emptyBucket(), byModel: {}, byProject: {}, assistantTurns: 0 };
+}
+
+function addRecord(into: Record<string, TokenBucket>, key: string, from: TokenBucket): void {
+  let b = into[key];
+  if (!b) {
+    b = emptyBucket();
+    into[key] = b;
+  }
+  addBucket(b, from);
+}
+
+/** Fold one file's day into a global bucket. */
+function foldDay(into: UsageBucket, d: DayAgg): void {
+  into.assistantTurns += d.turns;
+  for (const [model, tk] of d.byModel) {
+    addBucket(into.tokens, tk);
+    addRecord(into.byModel, model, tk);
+  }
+  for (const [project, tk] of d.byProject) addRecord(into.byProject, project, tk);
 }
 
 function mergeInto<K>(target: Map<K, TokenBucket>, key: K, from: TokenBucket): void {
@@ -84,6 +99,8 @@ export type FileAgg = {
   days: Map<string, DayAgg>;
   /** minute index (epoch ms / 60000) -> tokens, pruned to WINDOW_MS. */
   window: Map<number, number>;
+  /** Parser context to resume the next read of this file with. */
+  parser: ParserState | null;
 };
 
 function emptyFileAgg(dir: string): FileAgg {
@@ -104,6 +121,7 @@ function emptyFileAgg(dir: string): FileAgg {
     lastContextTokens: 0,
     days: new Map(),
     window: new Map(),
+    parser: null,
   };
 }
 
@@ -117,22 +135,20 @@ export class Store {
   private files = new Map<string, FileAgg>();
   private listeners: Array<() => void> = [];
   private codexRateLimits = new Map<string, CodexRateLimits>();
+  private codexRateLimitsAt = new Map<string, string>();
+  /** Per-day usage of files no longer live. Disjoint from `files` by path. */
+  private archived = new Map<string, ArchivedFile>();
+  /** Bumped on every archive change, so the owner knows when to persist. */
+  archiveVersion = 0;
+  /** Dirs whose archived usage is shown; null shows all (CLI, tests). */
+  private activeDirs: Set<string> | null = null;
 
   // Global aggregates are derived from `files` and rebuilt only when asked for
   // after a change — ingest itself stays O(1) per event.
   private aggDirty = true;
   private byDay = new Map<string, UsageBucket>();
   private byDayByDir = new Map<string, Map<string, Record<string, TokenBucket>>>();
-
-  private dayFloor = '';
-
-  constructor() {
-    this.refreshDayFloor();
-  }
-
-  private refreshDayFloor(): void {
-    this.dayFloor = dayKey(new Date(Date.now() - DAY_HORIZON * 86_400_000).toISOString());
-  }
+  private byMonth = new Map<string, UsageBucket>();
 
   onChange(fn: () => void): () => void {
     this.listeners.push(fn);
@@ -151,6 +167,7 @@ export class Store {
    * aggregate as they arrive; the caller never holds more than one.
    */
   openFile(filePath: string, dir: string): FileSink {
+    this.unarchive(filePath);
     let agg = this.files.get(filePath);
     if (!agg) {
       agg = emptyFileAgg(dir);
@@ -191,7 +208,10 @@ export class Store {
     if (ev.sessionId && !file.sessionId) file.sessionId = ev.sessionId;
     if (!file.firstTs) file.firstTs = ev.timestamp;
     file.lastTs = ev.timestamp;
-    file.lastEventType = ev.type;
+    // Only turns drive session state. Claude Code follows most turns with
+    // bookkeeping lines (system/turn_duration, queue-operation, attachment);
+    // letting those overwrite the type hid every finished turn's end_turn.
+    if (ev.type === 'user' || ev.type === 'assistant') file.lastEventType = ev.type;
     if (ev.cwd) file.cwd = ev.cwd;
     if (ev.gitBranch !== undefined) file.gitBranch = ev.gitBranch;
 
@@ -220,7 +240,7 @@ export class Store {
     }
 
     const day = dayKey(ev.timestamp);
-    if (day >= this.dayFloor) {
+    if (day) {
       let d = file.days.get(day);
       if (!d) {
         d = { turns: 0, byModel: new Map(), byProject: new Map() };
@@ -252,8 +272,60 @@ export class Store {
 
   /** Adopt an aggregate rehydrated from the on-disk scan cache. */
   restoreFile(filePath: string, agg: FileAgg): void {
+    this.unarchive(filePath);
     this.files.set(filePath, agg);
     this.aggDirty = true;
+  }
+
+  /**
+   * Retire a live file, keeping its per-day usage. For files whose source was
+   * deleted or that aged out of the scan horizon — their usage still happened.
+   */
+  archiveFile(filePath: string): boolean {
+    const file = this.files.get(filePath);
+    if (!file) return false;
+    this.files.delete(filePath);
+    // Kept even when empty: it records that the file was read, so an old
+    // file with no usage is not re-read on every launch.
+    this.archived.set(filePath, { dir: file.dir, days: file.days, v: INGEST_VERSION });
+    this.archiveVersion++;
+    this.aggDirty = true;
+    return true;
+  }
+
+  isArchived(filePath: string): boolean {
+    return this.archived.has(filePath);
+  }
+
+  /** Archived, and parsed by the current parsers (so no need to re-read it). */
+  isArchivedCurrent(filePath: string): boolean {
+    return this.archived.get(filePath)?.v === INGEST_VERSION;
+  }
+
+  /** Adopt archived usage loaded from disk. Live entries win over archived ones. */
+  restoreArchive(entries: Map<string, ArchivedFile>): void {
+    for (const [path, e] of entries) {
+      if (!this.files.has(path)) this.archived.set(path, e);
+    }
+    this.aggDirty = true;
+  }
+
+  archivedEntries(): IterableIterator<[string, ArchivedFile]> {
+    return this.archived.entries();
+  }
+
+  /** Archived usage outside these dirs is kept, but not shown. */
+  setActiveDirs(dirs: string[]): void {
+    this.activeDirs = new Set(dirs);
+    this.aggDirty = true;
+  }
+
+  /** A file that is live again is re-read in full, so its archived copy must go. */
+  private unarchive(filePath: string): void {
+    if (this.archived.delete(filePath)) {
+      this.archiveVersion++;
+      this.aggDirty = true;
+    }
   }
 
   fileAgg(filePath: string): FileAgg | undefined {
@@ -274,7 +346,10 @@ export class Store {
         removed = true;
       }
     }
-    for (const d of set) this.codexRateLimits.delete(d);
+    for (const d of set) {
+      this.codexRateLimits.delete(d);
+      this.codexRateLimitsAt.delete(d);
+    }
     if (!removed) return;
     this.aggDirty = true;
     this.emit();
@@ -294,65 +369,49 @@ export class Store {
   private ensureAggregates(): void {
     if (!this.aggDirty) return;
     this.aggDirty = false;
-    this.refreshDayFloor();
 
     const byDay = new Map<string, UsageBucket>();
+    const byMonth = new Map<string, UsageBucket>();
     const byDayByDir = new Map<string, Map<string, Record<string, TokenBucket>>>();
 
-    for (const file of this.files.values()) {
-      for (const [day, d] of file.days) {
-        if (day < this.dayFloor) {
-          file.days.delete(day);
-          continue;
-        }
-
+    const fold = (dir: string, days: Map<string, DayAgg>) => {
+      for (const [day, d] of days) {
         let bucket = byDay.get(day);
         if (!bucket) {
           bucket = emptyUsageBucket();
           byDay.set(day, bucket);
         }
-        bucket.assistantTurns += d.turns;
+        foldDay(bucket, d);
+
+        const month = day.slice(0, 7);
+        let mb = byMonth.get(month);
+        if (!mb) {
+          mb = emptyUsageBucket();
+          byMonth.set(month, mb);
+        }
+        foldDay(mb, d);
 
         let dirModels = byDayByDir.get(day);
         if (!dirModels) {
           dirModels = new Map();
           byDayByDir.set(day, dirModels);
         }
-        let models = dirModels.get(file.dir);
+        let models = dirModels.get(dir);
         if (!models) {
           models = {};
-          dirModels.set(file.dir, models);
+          dirModels.set(dir, models);
         }
-
-        for (const [model, tk] of d.byModel) {
-          addBucket(bucket.tokens, tk);
-          let m = bucket.byModel[model];
-          if (!m) {
-            m = emptyBucket();
-            bucket.byModel[model] = m;
-          }
-          addBucket(m, tk);
-
-          let dm = models[model];
-          if (!dm) {
-            dm = emptyBucket();
-            models[model] = dm;
-          }
-          addBucket(dm, tk);
-        }
-
-        for (const [project, tk] of d.byProject) {
-          let p = bucket.byProject[project];
-          if (!p) {
-            p = emptyBucket();
-            bucket.byProject[project] = p;
-          }
-          addBucket(p, tk);
-        }
+        for (const [model, tk] of d.byModel) addRecord(models, model, tk);
       }
+    };
+
+    for (const file of this.files.values()) fold(file.dir, file.days);
+    for (const a of this.archived.values()) {
+      if (this.activeDirs === null || this.activeDirs.has(a.dir)) fold(a.dir, a.days);
     }
 
     this.byDay = byDay;
+    this.byMonth = byMonth;
     this.byDayByDir = byDayByDir;
   }
 
@@ -434,6 +493,7 @@ export class Store {
         last30Days: mapDays(lastNDays(30)),
         thisMonth: mapDays(monthDays(0)),
         lastMonth: mapDays(monthDays(-1)),
+        last12Months: lastNMonths(12).map((m) => ({ day: m, bucket: this.byMonth.get(m) ?? emptyUsageBucket() })),
       },
       sessions: this.sessionViews(now),
       limits: {
@@ -447,7 +507,11 @@ export class Store {
     };
   }
 
-  updateCodexRateLimits(dir: string, limits: CodexRateLimits): void {
+  /** Keep the most recently observed limits; a cold scan reads files newest first. */
+  updateCodexRateLimits(dir: string, limits: CodexRateLimits, at: string): void {
+    const prev = this.codexRateLimitsAt.get(dir);
+    if (prev && prev >= at) return;
+    this.codexRateLimitsAt.set(dir, at);
     this.codexRateLimits.set(dir, limits);
   }
 

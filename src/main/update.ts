@@ -43,7 +43,7 @@ export function isGitHubReleaseUrl(url: string | undefined | null): boolean {
     const u = new URL(url);
     return u.protocol === 'https:' &&
       u.hostname === 'github.com' &&
-      u.pathname.startsWith('/realhidden/llmusage/releases/');
+      (u.pathname === '/realhidden/llmusage/releases' || u.pathname.startsWith('/realhidden/llmusage/releases/'));
   } catch {
     return false;
   }

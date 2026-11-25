@@ -15,6 +15,7 @@ import { checkForUpdate, isGitHubReleaseUrl } from './update.js';
 import { TaskStore } from './tasks/store.js';
 import { startProgressServer, DEFAULT_PORT, type ProgressServer } from './tasks/server.js';
 import { costOfModels } from '../shared/pricing.js';
+import { providerOf } from './jsonl/parser.js';
 import { todayKey } from '../shared/time.js';
 import type { StoreSnapshot, Config, DirLimits, DirPlan, PlanQuota, DataDirEntry } from '../shared/types.js';
 
@@ -33,7 +34,7 @@ let blinkOn = false;
 let broadcastTimer: ReturnType<typeof setTimeout> | null = null;
 let lingerTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingState: IconState | null = null;
-let pendingWaiting: Array<{ cwd: string; models: string[] }> = [];
+let pendingWaiting: Array<{ cwd: string; dir: string }> = [];
 
 const TOOLTIPS: Record<IconState, string> = {
   running: 'llmusage — working',
@@ -47,11 +48,11 @@ function playCompletionSound(): void {
   });
 }
 
-function showCompletionNotification(session: { cwd: string; models: string[] }): void {
+function showCompletionNotification(session: { cwd: string; dir: string }): void {
   const project = session.cwd.split('/').filter(Boolean).pop() ?? session.cwd;
-  const model = session.models[0] ?? 'session';
-  const provider = model.includes('claude') ? 'Claude' : model.includes('gpt') ? 'Codex' : model.includes('qwen') || model.includes('glm') ? 'Qwen' : model;
-  const title = `${provider} in ${project}`;
+  // The dir's label (claude, codex, qwen, zcode, claude-zai…) names the agent;
+  // model ids no longer do (GLM runs under Claude Code and zcode alike).
+  const title = `${normalizeDir(session.dir).label} in ${project}`;
   const body = 'Done — waiting for input';
   const n = new Notification({ title, body });
   n.on('click', () => {
@@ -184,17 +185,16 @@ async function decorateSnapshot(snap: StoreSnapshot, config: Config): Promise<St
   // Fan out per-dir quota fetches in parallel; quota module handles
   // per-provider routing and 60s caching. Codex gets rate limits from
   // session events via the store instead of an API call.
-  const isCodexDir = (p: string) => p.includes('.codex/sessions') || p.includes('.codex\\sessions');
-  const plans: DirPlan[] = await Promise.all(
-    byDir.map(async d => {
-      const plan = isCodexDir(d.path)
-        ? store.getCodexQuota(d.path)
-        : await getQuotaForDir(d.path);
-      // When no live quota is available, degrade to a file-based estimate:
-      // utilization derived from rolling token counts against configured caps.
-      return { dir: d.path, label: d.label, plan: plan ?? estimatePlan(d, config) };
-    })
-  );
+  // One dir at a time: the quota module caches for 60s, so this is cheap.
+  const plans: DirPlan[] = [];
+  for (const d of byDir) {
+    const plan = providerOf(d.path) === 'codex'
+      ? store.getCodexQuota(d.path)
+      : await getQuotaForDir(d.path);
+    // When no live quota is available, degrade to a file-based estimate:
+    // utilization derived from rolling token counts against configured caps.
+    plans.push({ dir: d.path, label: d.label, plan: plan ?? estimatePlan(d, config) });
+  }
   snap.limits.plans = plans.filter(p => p.plan != null);
   snap.tasks = tasks.view();
   return snap;
@@ -430,6 +430,14 @@ app.whenReady().then(async () => {
       win.webContents.openDevTools({ mode: 'detach' });
     }
 
+    // Never open app windows for links: a child window would inherit the
+    // preload bridge. Release links go to the browser; anything else is dropped.
+    win.webContents.setWindowOpenHandler(({ url }) => {
+      if (isGitHubReleaseUrl(url)) void shell.openExternal(url);
+      return { action: 'deny' };
+    });
+    win.webContents.on('will-navigate', (event) => event.preventDefault());
+
     win.webContents.on('did-finish-load', async () => {
       const snap = await currentSnapshot();
       win.webContents.send('store:update', snap);
@@ -453,8 +461,11 @@ app.whenReady().then(async () => {
 
   // Expire finished tasks and re-render staleness/ETA countdowns. Nothing to
   // repaint while the popup is closed; prune() emits on its own when it drops one.
+  // Session state is also a function of time (running turns into waiting 30s
+  // after the last write), so re-derive the tray even when nothing changed;
+  // sendSnapshot does only the cheap tray part while the popup is closed.
   pruneTimer = setInterval(() => {
-    if (!tasks.prune() && popupVisible()) void sendSnapshot();
+    if (!tasks.prune()) void sendSnapshot();
   }, 30_000);
 
   if (initConfig.autoLaunch) {

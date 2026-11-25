@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import { writeFileSync, renameSync, mkdirSync } from 'node:fs';
 import type { TaskProgress, TaskPoint, TaskStatus, TaskView } from '../../shared/types.js';
-import { pctOf, progressReports, projectEta, ratePerSec, type RatePoint } from './eta.js';
+import { MIN_PROGRESS_REPORTS, pctOf, progressReports, projectEta, ratePerSec, type RatePoint } from './eta.js';
 
 const DEFAULT_STATE_PATH = join(homedir(), '.config', 'llmusage', 'tasks.json');
 
@@ -23,6 +23,12 @@ const MAX_DEPTH = 3;
  * stable id is never suppressed forever by one dismissal.
  */
 const DISMISS_TTL_MS = 12 * 60 * 60_000;
+/** A running task silent this long is abandoned (its agent was killed), not slow. */
+const ABANDONED_MS = 24 * 60 * 60_000;
+/** Hard cap on rows, against a loop that mints a fresh id per run. */
+const MAX_TASKS = 200;
+/** Display strings are capped so one push cannot bloat tasks.json. */
+const MAX_TEXT = { title: 200, note: 1000, unit: 32, source: 300 } as const;
 
 const STATUSES: TaskStatus[] = ['running', 'paused', 'done', 'failed'];
 
@@ -104,8 +110,10 @@ export class TaskStore {
     if (!existing) {
       const tomb = this.activeTombstone(patch.id, nowMs);
       if (tomb) {
-        if (patch.reset || incomingCurrent(patch) < tomb.current) {
-          // A counter that went backwards (or an explicit reset) is a new run.
+        // Only an explicit reset or a counter that went backwards is a new run.
+        // A push with no `current` (a `done --note`, a heartbeat) is the old one.
+        const current = patch.current != null && Number.isFinite(patch.current) ? patch.current : null;
+        if (patch.reset || (current != null && current < tomb.current)) {
           this.dismissed.delete(patch.id);
         } else {
           return { ok: false, reason: 'dismissed', dismissedAt: tomb.at };
@@ -132,8 +140,9 @@ export class TaskStore {
     };
 
     const wasFinished = isFinished(task.status);
-    if (patch.title != null) task.title = patch.title;
-    if (patch.parent !== undefined) task.parent = patch.parent || null;
+    if (patch.title != null) task.title = clip(patch.title, MAX_TEXT.title);
+    // A task cannot be its own parent: it would be reachable from no root.
+    if (patch.parent !== undefined) task.parent = patch.parent && patch.parent !== task.id ? patch.parent : null;
     if (patch.status != null && STATUSES.includes(patch.status as TaskStatus)) {
       task.status = patch.status as TaskStatus;
     }
@@ -141,9 +150,9 @@ export class TaskStore {
     if (patch.total !== undefined) {
       task.total = patch.total != null && Number.isFinite(patch.total) && patch.total > 0 ? patch.total : null;
     }
-    if (patch.unit !== undefined) task.unit = patch.unit || null;
-    if (patch.note !== undefined) task.note = patch.note || null;
-    if (patch.source !== undefined) task.source = patch.source || null;
+    if (patch.unit !== undefined) task.unit = patch.unit ? clip(patch.unit, MAX_TEXT.unit) : null;
+    if (patch.note !== undefined) task.note = patch.note ? clip(patch.note, MAX_TEXT.note) : null;
+    if (patch.source !== undefined) task.source = patch.source ? clip(patch.source, MAX_TEXT.source) : null;
     if (patch.startedAt != null && !Number.isNaN(Date.parse(patch.startedAt))) {
       task.startedAt = new Date(patch.startedAt).toISOString();
     }
@@ -185,27 +194,33 @@ export class TaskStore {
     return [...this.dismissed.keys()];
   }
 
-  /** Record a history sample, coalescing heartbeats that carry no movement. */
+  /**
+   * Record a history sample, coalescing heartbeats that carry no movement.
+   *
+   * The point where `current` last changed keeps its timestamp. After it, a
+   * flat stretch is one fixed point per SAMPLE_MIN_GAP_MS plus a tail that
+   * heartbeats keep refreshing, so a stall charts as a step and a flat line
+   * rather than a slow ramp up to "now".
+   */
   private sample(task: TaskProgress, nowMs: number): void {
-    const etaEffective = task.etaAt ?? isoOrNull(projectEta(ratePoints(task), task.total, nowMs));
     const point: TaskPoint = {
       t: new Date(nowMs).toISOString(),
       current: task.current,
       pct: pctOf(task.current, task.total),
-      etaAt: etaEffective,
+      etaAt: null,
     };
-    const last = task.history[task.history.length - 1];
-    const moved = !last || last.current !== point.current;
-    const aged = !last || nowMs - Date.parse(last.t) >= SAMPLE_MIN_GAP_MS;
-    if (!moved && !aged) {
-      // Same position, too soon: refresh the tail instead of growing history.
-      task.history[task.history.length - 1] = point;
-      return;
-    }
-    task.history.push(point);
-    if (task.history.length > MAX_HISTORY) {
-      task.history.splice(0, task.history.length - MAX_HISTORY);
-    }
+    const h = task.history;
+    const last = h[h.length - 1];
+    const prev = h[h.length - 2];
+    const refreshTail = last !== undefined && prev !== undefined
+      && point.current === last.current && last.current === prev.current
+      && Date.parse(last.t) - Date.parse(prev.t) < SAMPLE_MIN_GAP_MS;
+    if (refreshTail) h[h.length - 1] = point;
+    else h.push(point);
+    if (h.length > MAX_HISTORY) h.splice(0, h.length - MAX_HISTORY);
+
+    // After inserting, so the projection includes this report.
+    point.etaAt = task.etaAt ?? isoOrNull(projectEta(ratePoints(task), task.total, nowMs));
   }
 
   /** Arm or disarm the finish sound for one task. */
@@ -268,17 +283,26 @@ export class TaskStore {
     return this.tasks.get(id);
   }
 
-  /** Expire finished tasks past retention. Returns true when anything changed. */
+  /**
+   * Expire finished tasks past retention and running ones abandoned for a day,
+   * then enforce MAX_TASKS, oldest update first. Returns true on any change.
+   */
   prune(nowMs: number = Date.now()): boolean {
     let changed = false;
+    const expire = (t: TaskProgress) => {
+      this.tasks.delete(t.id);
+      // Aged-out work is suppressed too: a loop still announcing 'done'
+      // would otherwise re-add the same finished row every retention cycle.
+      this.dismissed.set(t.id, { id: t.id, current: t.current, at: new Date(nowMs).toISOString() });
+      changed = true;
+    };
     for (const t of [...this.tasks.values()]) {
-      if (isFinished(t.status) && nowMs - Date.parse(t.updatedAt) > FINISHED_RETENTION_MS) {
-        this.tasks.delete(t.id);
-        // Aged-out work is suppressed too: a loop still announcing 'done'
-        // would otherwise re-add the same finished row every retention cycle.
-        this.dismissed.set(t.id, { id: t.id, current: t.current, at: new Date(nowMs).toISOString() });
-        changed = true;
-      }
+      const age = nowMs - Date.parse(t.updatedAt);
+      if (isFinished(t.status) ? age > FINISHED_RETENTION_MS : age > ABANDONED_MS) expire(t);
+    }
+    if (this.tasks.size > MAX_TASKS) {
+      const oldest = [...this.tasks.values()].sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
+      for (const t of oldest.slice(0, this.tasks.size - MAX_TASKS)) expire(t);
     }
     for (const tomb of [...this.dismissed.values()]) {
       if (nowMs - Date.parse(tomb.at) > DISMISS_TTL_MS) this.dismissed.delete(tomb.id);
@@ -310,6 +334,11 @@ export class TaskStore {
       const reports = progressReports(points);
       const rate = ratePerSec(points);
       const etaComputed = isoOrNull(projectEta(points, task.total, nowMs));
+      const etaBlocker: TaskView['etaBlocker'] =
+        task.etaAt || etaComputed ? null
+        : task.total == null ? { reason: 'needs-total' }
+        : reports < MIN_PROGRESS_REPORTS ? { reason: 'needs-reports', missing: MIN_PROGRESS_REPORTS - reports }
+        : { reason: 'no-recent-progress' };
       const ownPct = pctOf(task.current, task.total);
       const childPct = averagePct(children);
       const active = task.status === 'running';
@@ -320,6 +349,7 @@ export class TaskStore {
         pct: task.status === 'done' ? 100 : ownPct ?? childPct,
         etaComputed,
         etaEffective: task.etaAt ?? etaComputed,
+        etaBlocker,
         ratePerSec: rate,
         progressReports: reports,
         stale: active && nowMs - Date.parse(task.updatedAt) > task.ttlSeconds * 1000,
@@ -329,9 +359,15 @@ export class TaskStore {
     };
 
     const seen = new Set<string>();
-    return (byParent.get(null) ?? [])
+    const roots = (byParent.get(null) ?? [])
       .sort(byStatusThenStart)
       .map(t => build(t, 0, seen));
+    // Tasks only reachable through a parent cycle (a -> b -> a) would never
+    // render, so nothing could remove them. Show them as roots instead.
+    for (const t of [...this.tasks.values()].sort(byStatusThenStart)) {
+      if (!seen.has(t.id)) roots.push(build(t, 0, seen));
+    }
+    return roots;
   }
 
   /* ------------------------------------------------------------ persistence */
@@ -396,9 +432,8 @@ export class TaskStore {
   }
 }
 
-/** `current` a push would land on: explicit value, else 0 for a fresh task. */
-function incomingCurrent(patch: TaskUpsert): number {
-  return patch.current != null && Number.isFinite(patch.current) ? patch.current : 0;
+function clip(s: string, max: number): string {
+  return s.length > max ? s.slice(0, max - 1) + '…' : s;
 }
 
 function isFinished(status: TaskStatus): boolean {

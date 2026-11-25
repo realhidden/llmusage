@@ -1,6 +1,7 @@
 import type { Config, DataDirEntry, DiscoveredDir, StoreSnapshot } from '../../shared/types.js';
 import { effectivePrice } from '../../shared/pricing.js';
 import { modelShort } from '../components/token-bar.js';
+import { escapeHtml } from '../components/html.js';
 
 let visible = false;
 
@@ -284,10 +285,6 @@ export function toggleSettings(container: HTMLElement): void {
     if (p) p.remove();
     document.getElementById('panels')!.style.display = '';
   }
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function escapeAttr(s: string): string {

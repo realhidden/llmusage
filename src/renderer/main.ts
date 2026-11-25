@@ -6,6 +6,7 @@ import { renderTasks } from './panels/tasks.js';
 import { toggleSettings } from './panels/settings.js';
 import { formatCompact, bucketTotal } from './components/token-bar.js';
 import { formatCost } from '../shared/pricing.js';
+import { escapeHtml } from './components/html.js';
 
 let lastSnapshot: StoreSnapshot | null = null;
 
@@ -126,7 +127,3 @@ window.api.invoke('store:snapshot').then((snap: StoreSnapshot) => {
     panels.innerHTML = '<div class="empty-state">Loading…</div>';
   }
 });
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}

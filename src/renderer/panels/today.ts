@@ -1,5 +1,6 @@
 import type { StoreSnapshot, DirLimits, QuotaWindow, PlanQuota, DirPlan } from '../../shared/types.js';
 import { formatCompact, bucketTotal, limitColor } from '../components/token-bar.js';
+import { escapeHtml } from '../components/html.js';
 
 /** Both detail views are behind icons in the panel label; closed by default. */
 let burnExpanded = false;
@@ -230,8 +231,4 @@ function formatResetFull(iso: string): string {
 
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }

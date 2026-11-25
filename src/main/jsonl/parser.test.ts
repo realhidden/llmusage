@@ -33,6 +33,20 @@ describe('providerOf', () => {
 });
 
 describe('claude parser', () => {
+  it('counts a message once although Claude Code writes a line per content block', () => {
+    const line = (id: string, ts: string) => JSON.stringify({ type: 'assistant', timestamp: ts, sessionId: 's',
+      message: { id, model: 'claude-opus-5-5', stop_reason: 'tool_use', usage: { input_tokens: 1, output_tokens: 10 } } });
+    const { events, parser } = run(CLAUDE, [line('m1', 't1'), line('m1', 't2'), line('m2', 't3'), big(JSON.parse(line('m2', 't4')))]);
+    expect(events.map(e => e.timestamp)).toEqual(['t1', 't3']);
+
+    // A repeat split across two reads of the file is still a repeat.
+    const resumed = createParser(CLAUDE, parser.state());
+    const more: RawEvent[] = [];
+    resumed.push(line('m2', 't5'), e => more.push(e));
+    resumed.push(line('m3', 't6'), e => more.push(e));
+    expect(more.map(e => e.timestamp)).toEqual(['t6']);
+  });
+
   const assistant = {
     parentUuid: null,
     message: {
@@ -87,50 +101,75 @@ describe('claude parser', () => {
 });
 
 describe('codex parser', () => {
-  it('attributes usage from token_count to the preceding assistant message', () => {
+  const tokenCount = (ts: string, total: number, last: Record<string, number>, limits = false) => JSON.stringify({
+    type: 'event_msg', timestamp: ts, payload: { type: 'token_count',
+      info: { last_token_usage: last, total_token_usage: { total_tokens: total } },
+      ...(limits ? { rate_limits: { primary: { used_percent: 12, window_minutes: 300, resets_at: 99 }, secondary: { used_percent: 34, window_minutes: 10080, resets_at: 100 } } } : {}) } });
+
+  it('counts every request whose running total moved, tool-call turns included', () => {
     const { events, parser } = run(CODEX, [
       JSON.stringify({ type: 'session_meta', timestamp: 't0', payload: { id: 'sess', cwd: '/proj', git: { branch: 'dev' } } }),
       JSON.stringify({ type: 'turn_context', timestamp: 't1', payload: { model: 'gpt-5' } }),
       JSON.stringify({ type: 'event_msg', timestamp: 't2', payload: { type: 'user_message' } }),
-      JSON.stringify({ type: 'response_item', timestamp: 't3', payload: { type: 'message', role: 'assistant' } }),
-      JSON.stringify({ type: 'event_msg', timestamp: 't4', payload: { type: 'token_count',
-        info: { last_token_usage: { input_tokens: 7, output_tokens: 3, reasoning_output_tokens: 4, cached_input_tokens: 5 } },
-        rate_limits: { primary: { used_percent: 12, window_minutes: 300, resets_at: 99 }, secondary: { used_percent: 34, window_minutes: 10080, resets_at: 100 } } } }),
+      // A tool call: no assistant message before this token_count.
+      tokenCount('t3', 10, { input_tokens: 7, cached_input_tokens: 5, output_tokens: 3, reasoning_output_tokens: 2 }),
+      JSON.stringify({ type: 'response_item', timestamp: 't4', payload: { type: 'message', role: 'assistant' } }),
+      tokenCount('t5', 30, { input_tokens: 15, cached_input_tokens: 10, output_tokens: 5 }, true),
+      // Same total again: a repeat, not a request.
+      tokenCount('t6', 30, { input_tokens: 15, cached_input_tokens: 10, output_tokens: 5 }),
     ]);
 
-    expect(events.map(e => e.type)).toEqual(['user', 'assistant']);
+    expect(events.map(e => e.type)).toEqual(['user', 'assistant', 'assistant']);
     const a = events[1]!;
-    expect(a.sessionId).toBe('sess');
-    expect(a.cwd).toBe('/proj');
-    expect(a.gitBranch).toBe('dev');
-    expect(a.message?.model).toBe('gpt-5');
-    // reasoning tokens fold into output
-    expect(a.message?.usage).toEqual({ input_tokens: 7, output_tokens: 7, cache_creation_input_tokens: 0, cache_read_input_tokens: 5 });
+    expect([a.sessionId, a.cwd, a.gitBranch, a.message?.model]).toEqual(['sess', '/proj', 'dev', 'gpt-5']);
+    // input includes cached, output includes reasoning: neither is added on top.
+    expect(a.message?.usage).toEqual({ input_tokens: 2, output_tokens: 3, cache_creation_input_tokens: 0, cache_read_input_tokens: 5 });
     expect(parser.rateLimits?.primary.used_percent).toBe(12);
+    expect(parser.rateLimitsAt).toBe('t5');
   });
 
-  it('takes rate limits from a token_count with no pending assistant, without emitting', () => {
-    const { events, parser } = run(CODEX, [
-      JSON.stringify({ type: 'event_msg', timestamp: 't', payload: { type: 'token_count',
-        info: { last_token_usage: { input_tokens: 1 } },
-        rate_limits: { primary: { used_percent: 5, window_minutes: 300, resets_at: 1 }, secondary: { used_percent: 6, window_minutes: 10080, resets_at: 2 } } } }),
+  it('resumes a file with the session meta and model read before the offset', () => {
+    const first = run(CODEX, [
+      JSON.stringify({ type: 'session_meta', timestamp: 't0', payload: { id: 'sess', cwd: '/proj', git: { branch: 'dev' } } }),
+      JSON.stringify({ type: 'turn_context', timestamp: 't1', payload: { model: 'gpt-5' } }),
+      tokenCount('t2', 10, { input_tokens: 7, output_tokens: 3 }),
     ]);
-    expect(events).toEqual([]);
-    expect(parser.rateLimits?.secondary.used_percent).toBe(6);
+    const resumed = createParser(CODEX, first.parser.state());
+    const events: RawEvent[] = [];
+    resumed.push(tokenCount('t3', 10, { input_tokens: 7, output_tokens: 3 }), e => events.push(e));
+    resumed.push(tokenCount('t4', 20, { input_tokens: 8, output_tokens: 2 }), e => events.push(e));
+    expect(events).toHaveLength(1);
+    expect([events[0]!.sessionId, events[0]!.gitBranch, events[0]!.message?.model]).toEqual(['sess', 'dev', 'gpt-5']);
   });
 });
 
 describe('qwen parser', () => {
-  it('folds thought tokens into output and maps cached content to cache reads', () => {
+  const telemetry = (name: string, ev: Record<string, unknown> = {}) => ({
+    type: 'system', subtype: 'ui_telemetry', timestamp: 't1', sessionId: 's', cwd: '/p', gitBranch: 'main',
+    systemPayload: { uiEvent: { 'event.name': name, ...ev } },
+  });
+
+  it('takes usage and the served model from api_response telemetry', () => {
     const { events } = run(QWEN, [
       JSON.stringify({ type: 'user', timestamp: 't0', sessionId: 's', cwd: '/p', gitBranch: 'main' }),
-      JSON.stringify({ type: 'assistant', timestamp: 't1', sessionId: 's', cwd: '/p', gitBranch: 'main', model: 'qwen3',
-        usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 20, thoughtsTokenCount: 5, cachedContentTokenCount: 50 } }),
-      // An assistant turn with no usage contributes nothing.
-      JSON.stringify({ type: 'assistant', timestamp: 't2', sessionId: 's' }),
+      JSON.stringify(telemetry('qwen-code.api_response', {
+        model: 'qwen3.8-flash', input_token_count: 100, output_token_count: 20,
+        thoughts_token_count: 5, cached_content_token_count: 60, response_text: 'hi',
+      })),
+      JSON.stringify(telemetry('qwen-code.tool_call', { function_name: 'ls' })),
     ]);
     expect(events.map(e => e.type)).toEqual(['user', 'assistant']);
-    expect(events[1]!.message?.usage).toEqual({ input_tokens: 100, output_tokens: 25, cache_creation_input_tokens: 0, cache_read_input_tokens: 50 });
+    expect(events[1]!.message?.model).toBe('qwen3.8-flash');
+    // input_token_count includes the cached part.
+    expect(events[1]!.message?.usage).toEqual({ input_tokens: 40, output_tokens: 25, cache_creation_input_tokens: 0, cache_read_input_tokens: 60 });
+  });
+
+  it('ignores usage on assistant lines, which names the alias and repeats subagent calls', () => {
+    const { events } = run(QWEN, [
+      JSON.stringify({ type: 'assistant', timestamp: 't1', sessionId: 's', model: 'hidden/coder-opus',
+        usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 20, cachedContentTokenCount: 50 } }),
+    ]);
+    expect(events).toEqual([]);
   });
 });
 

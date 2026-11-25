@@ -4,6 +4,7 @@ import { readFile, writeFile, rename, mkdir } from 'node:fs/promises';
 import { writeFileSync, renameSync, mkdirSync } from 'node:fs';
 import type { TokenBucket } from '../../shared/types.js';
 import type { FileAgg, DayAgg } from './store.js';
+import type { ParserState } from '../jsonl/parser.js';
 
 /**
  * On-disk cache of per-file aggregates.
@@ -18,7 +19,12 @@ import type { FileAgg, DayAgg } from './store.js';
  * must drop the entry rather than adjust it.
  */
 
-const CACHE_VERSION = 1;
+/**
+ * Bump whenever a parser changes what it emits. Cached aggregates are then
+ * re-read, and so are archived ones whose source file still exists.
+ */
+export const INGEST_VERSION = 3;
+const CACHE_VERSION = INGEST_VERSION;
 
 export function defaultCachePath(): string {
   return join(homedir(), '.config', 'llmusage', 'scan-cache.json');
@@ -33,7 +39,7 @@ export type CacheEntry = {
   agg: FileAgg;
 };
 
-type SerializedDay = {
+export type SerializedDay = {
   turns: number;
   byModel: Record<string, TokenBucket>;
   byProject: Record<string, TokenBucket>;
@@ -57,6 +63,7 @@ type SerializedAgg = {
   days: Record<string, SerializedDay>;
   /** Flattened [minute, tokens] pairs — far smaller as JSON than an object map. */
   window: number[];
+  parser?: ParserState | null;
 };
 
 type SerializedEntry = {
@@ -85,11 +92,24 @@ function recordToMap(r: Record<string, TokenBucket> | undefined): Map<string, To
   return new Map(Object.entries(r ?? {}));
 }
 
-function serializeAgg(agg: FileAgg): SerializedAgg {
-  const days: Record<string, SerializedDay> = {};
-  for (const [day, d] of agg.days) {
-    days[day] = { turns: d.turns, byModel: mapToRecord(d.byModel), byProject: mapToRecord(d.byProject) };
+export function serializeDays(days: Map<string, DayAgg>): Record<string, SerializedDay> {
+  const out: Record<string, SerializedDay> = {};
+  for (const [day, d] of days) {
+    out[day] = { turns: d.turns, byModel: mapToRecord(d.byModel), byProject: mapToRecord(d.byProject) };
   }
+  return out;
+}
+
+export function deserializeDays(r: Record<string, SerializedDay> | undefined): Map<string, DayAgg> {
+  const days = new Map<string, DayAgg>();
+  for (const [day, d] of Object.entries(r ?? {})) {
+    days.set(day, { turns: d.turns ?? 0, byModel: recordToMap(d.byModel), byProject: recordToMap(d.byProject) });
+  }
+  return days;
+}
+
+function serializeAgg(agg: FileAgg): SerializedAgg {
+  const days = serializeDays(agg.days);
   const window: number[] = [];
   for (const [minute, tokens] of agg.window) window.push(minute, tokens);
 
@@ -110,14 +130,12 @@ function serializeAgg(agg: FileAgg): SerializedAgg {
     lastContextTokens: agg.lastContextTokens,
     days,
     window,
+    parser: agg.parser,
   };
 }
 
 function deserializeAgg(s: SerializedAgg): FileAgg {
-  const days = new Map<string, DayAgg>();
-  for (const [day, d] of Object.entries(s.days ?? {})) {
-    days.set(day, { turns: d.turns ?? 0, byModel: recordToMap(d.byModel), byProject: recordToMap(d.byProject) });
-  }
+  const days = deserializeDays(s.days);
   const window = new Map<number, number>();
   const flat = s.window ?? [];
   for (let i = 0; i + 1 < flat.length; i += 2) window.set(flat[i]!, flat[i + 1]!);
@@ -139,6 +157,7 @@ function deserializeAgg(s: SerializedAgg): FileAgg {
     lastContextTokens: s.lastContextTokens ?? 0,
     days,
     window,
+    parser: s.parser ?? null,
   };
 }
 

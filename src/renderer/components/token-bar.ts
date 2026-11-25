@@ -21,16 +21,21 @@ const PALETTE = [
   '#b4befe', // lavender
 ] as const;
 
+/**
+ * Claude rules are anchored on `claude-`: local proxy aliases such as
+ * `hidden/coder-opus` run Qwen and must not read as Claude Opus.
+ */
 const CURATED: Array<{ match: RegExp; color: string }> = [
-  { match: /opus/i,        color: '#89b4fa' }, // blue
-  { match: /sonnet/i,      color: '#a6e3a1' }, // green
-  { match: /haiku/i,       color: '#f9e2af' }, // yellow
-  { match: /glm-5\.3/i,    color: '#f5c2e7' }, // pink
-  { match: /glm-5\.1/i,    color: '#f38ba8' }, // red
-  { match: /glm-5-turbo/i, color: '#fab387' }, // peach
-  { match: /glm/i,         color: '#89dceb' }, // sky (other glm lines)
-  { match: /qwen/i,        color: '#74c7ec' }, // sapphire
-  { match: /\bgpt|codex|\bo[13]\b/i, color: '#94e2d5' }, // teal
+  { match: /^claude-.*opus/i,          color: '#89b4fa' }, // blue
+  { match: /^claude-.*sonnet/i,        color: '#a6e3a1' }, // green
+  { match: /^claude-.*haiku/i,         color: '#f9e2af' }, // yellow
+  { match: /^claude-(fable|mythos)/i,  color: '#cba6f7' }, // mauve
+  { match: /glm-5\.4/i,                color: '#f38ba8' }, // red
+  { match: /glm-5\.3-flash/i,          color: '#fab387' }, // peach
+  { match: /glm-5\.3/i,                color: '#f5c2e7' }, // pink
+  { match: /glm/i,                     color: '#89dceb' }, // sky (other glm lines)
+  { match: /qwen|^hidden\//i,          color: '#74c7ec' }, // sapphire (local proxy aliases are Qwen)
+  { match: /\bgpt|codex|\bo[13]\b/i,   color: '#94e2d5' }, // teal
 ];
 
 const colorCache = new Map<string, string>();

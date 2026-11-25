@@ -1,10 +1,5 @@
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { readdir } from 'node:fs/promises';
-
-export function rolloutDir(): string {
-  return join(homedir(), '.zcode', 'cli', 'rollout');
-}
 
 export async function listSessionFiles(dir: string): Promise<string[]> {
   const files: string[] = [];

@@ -161,6 +161,17 @@ async function writeEndpointFile(path: string, port: number, url: string, versio
 
 async function handle(req: IncomingMessage, res: ServerResponse, opts: StartOptions): Promise<void> {
   const { store, version } = opts;
+
+  // DNS rebinding: a page whose hostname resolves to 127.0.0.1 is same-origin
+  // with us, so the JSON Content-Type rule no longer forces a preflight. Its
+  // requests still carry its own Host header.
+  const port = req.socket.localPort;
+  const host = req.headers.host ?? '';
+  if (host !== `127.0.0.1:${port}` && host !== `localhost:${port}`) {
+    sendJSON(res, 403, { ok: false, error: 'unexpected Host header' });
+    return;
+  }
+
   const url = new URL(req.url ?? '/', `http://${HOST}`);
   const path = url.pathname.replace(/\/+$/, '') || '/';
   const method = req.method ?? 'GET';
@@ -170,7 +181,15 @@ async function handle(req: IncomingMessage, res: ServerResponse, opts: StartOpti
     return;
   }
 
-  const taskId = path.startsWith('/v1/tasks/') ? decodeURIComponent(path.slice('/v1/tasks/'.length)) : null;
+  let taskId: string | null = null;
+  if (path.startsWith('/v1/tasks/')) {
+    try {
+      taskId = decodeURIComponent(path.slice('/v1/tasks/'.length));
+    } catch {
+      sendJSON(res, 400, { ok: false, error: 'malformed task id' });
+      return;
+    }
+  }
   const isCollection = path === '/v1/tasks';
 
   if (!isCollection && taskId == null) {

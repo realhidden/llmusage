@@ -1,6 +1,5 @@
 import type { IpcMain, IpcMainInvokeEvent } from 'electron';
-import type { Invokes, Events } from '../shared/types.js';
-import type { BrowserWindow } from 'electron';
+import type { Invokes } from '../shared/types.js';
 
 type InvokeHandler<K extends keyof Invokes> = (
   event: IpcMainInvokeEvent,
@@ -20,14 +19,3 @@ export function registerIPC(
   }
 }
 
-export function broadcast<K extends keyof Events>(
-  windows: BrowserWindow[],
-  channel: K,
-  payload: Events[K]
-): void {
-  for (const win of windows) {
-    if (!win.isDestroyed()) {
-      win.webContents.send(channel, payload);
-    }
-  }
-}

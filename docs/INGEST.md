@@ -54,8 +54,17 @@ returns `"message"` as the type.
 
 ### `jsonl/parser.ts` — per-provider line parsers
 
-One stateful parser per file, fed a line at a time, emitting zero or one
-`RawEvent`. Lines under 4 KB go to `JSON.parse` (faster than a JS character scan
+One stateful parser per file read, fed a line at a time, emitting zero or one
+`RawEvent`. Context a format states only once (Codex's session meta and model,
+Claude's last message id) is saved in the file's aggregate as `parser` state —
+and so in the scan cache — and restored when a later read resumes mid-file.
+
+- **Claude** writes one assistant line per content block, each repeating the
+  message's `usage`; repeats of the last message id are skipped (counting them
+  inflated Claude totals ~2.2x).
+- **Codex**: every `token_count` whose running total moved is one request.
+  `input_tokens` includes the cached part and `output_tokens` the reasoning
+  part, so neither is added on top. Lines under 4 KB go to `JSON.parse` (faster than a JS character scan
 at that size); larger ones go to the slicer. Both paths emit the same flat
 shape, so nothing downstream can come to depend on a whole parsed line.
 
@@ -66,15 +75,53 @@ buckets, session metadata, and a rolling-window index bucketed to the minute.
 A few hundred bytes plus one entry per active minute — versus the 286 MB that
 one file's events used to cost.
 
-Global `byDay` / `byDayByDir` views are derived from those on demand and
-memoized behind a dirty flag, so ingest stays O(1) per event.
+Global `byDay` / `byMonth` / `byDayByDir` views are derived from those on
+demand and memoized behind a dirty flag, so ingest stays O(1) per event.
 
-Two horizons bound growth:
+Day buckets are never pruned: the 12-month range needs them, and they cost a
+few hundred bytes per file. Two horizons bound the rest:
 
-- **75 days** — the furthest back any panel looks (`lastMonth` reaches ~62).
-  Older days are dropped, and files untouched that long are neither read nor kept.
+- **80 days** — files untouched that long leave the live set. Their per-day
+  usage is archived (below) and they are not re-read.
 - **7 days** — the longest rolling window the UI queries. Older minute buckets
   are pruned on access.
+
+## History
+
+Agents prune their own session files (Claude Code after 30 days by default),
+so a file's usage used to vanish the moment it was deleted.
+`~/.config/llmusage/history.json` keeps the per-day aggregate of every file
+that left the live set — deleted by its agent, aged past 80 days, or a zcode
+session gone from its DB.
+
+- Keyed by file path. A path is live or archived, never both: a file that
+  comes back (a resumed session) is re-read in full and its archived entry is
+  dropped, so nothing counts twice.
+- Old files never seen live (first run, a newly added dir) are read once
+  straight into the archive.
+- Not derived data — the sources may be gone. It is never invalidated by a
+  cache version bump, and a file that fails to parse is renamed aside rather
+  than overwritten.
+- Archived usage of a dir removed from the config is hidden, not deleted.
+- Kept only when the watcher persists state (the app); the CLI reads live
+  files only.
+
+## zcode
+
+zcode keeps usage in SQLite (`~/.zcode/cli/db/db.sqlite`, `model_usage`, one
+row per model request) and writes rollout JSONL only for some sessions. When
+the DB exists the rollout files are ignored. `zcode/db.ts` reads it read-only
+via `node:sqlite`, fingerprints each root session (row count, last
+completion, running count) and re-feeds only sessions that changed; subagent
+sessions fold into their parent.
+
+## qwen
+
+Usage comes from the `qwen-code.api_response` telemetry line written once per
+API call, not from `usageMetadata` on assistant lines: some versions write
+none there, assistant lines name the configured alias rather than the served
+model, and the session file's telemetry already covers its subagents. It
+matches qwen's own `~/.localqwen/usage/token-usage-*.jsonl` call for call.
 
 ## The scan cache
 

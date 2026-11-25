@@ -3,21 +3,18 @@ import { Watcher } from '../claude/watcher.js';
 import { dirsFromConfig } from '../claude/dirs.js';
 import { loadConfig } from '../config.js';
 import { formatCompact } from '../../shared/time.js';
+import { providerOf } from '../jsonl/parser.js';
 import type { SessionState } from '../../shared/types.js';
 
 const args = process.argv.slice(2);
 const showResume = args.includes('--resume') || args.includes('--lately');
 const asJson = args.includes('--json');
 
-function providerFor(filePath: string): string {
-  if (filePath.includes('.codex/sessions') || filePath.includes('.codex\\sessions')) return 'codex';
-  if (filePath.includes('.localqwen/projects') || filePath.includes('.localqwen\\projects')) return 'localqwen';
-  if (filePath.includes('.zcode/cli/rollout') || filePath.includes('.zcode\\cli\\rollout')) return 'zcode';
-  return 'claude';
-}
+/** The CLI that resumes a session from this dir. */
+const RESUME_CLI = { claude: 'claude', codex: 'codex', qwen: 'localqwen', zcode: 'zcode' } as const;
 
 function resumeCommand(session: SessionState): string {
-  const provider = providerFor(session.filePath);
+  const provider = RESUME_CLI[providerOf(session.dir)];
   const id = session.sessionId || 'unknown';
   return `${provider} --resume ${id}`;
 }

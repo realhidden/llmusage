@@ -4,17 +4,22 @@ import { modelColor } from './token-bar.js';
 describe('modelColor', () => {
   it('keeps curated family colors distinct', () => {
     const known = [
-      'claude-opus-4-7',
-      'claude-sonnet-4-6',
-      'claude-haiku-4-5',
+      'claude-opus-5-5',
+      'claude-sonnet-5-5',
+      'claude-haiku-5-5',
+      'claude-fable-5-2',
+      'GLM-5.4',
       'GLM-5.3',
-      'glm-5.1',
-      'glm-5-turbo',
-      'qwen-coder',
-      'gpt-4o',
+      'GLM-5.3-Flash',
+      'qwen3.8-flash-next-iq3_xxs',
+      'gpt-5.5',
     ];
     const colors = new Set(known.map(modelColor));
     expect(colors.size).toBe(known.length);
+  });
+
+  it('does not colour a local proxy alias as Claude Opus', () => {
+    expect(modelColor('hidden/coder-opus')).not.toBe(modelColor('claude-opus-5-5'));
   });
 
   it('is deterministic for unknown models', () => {

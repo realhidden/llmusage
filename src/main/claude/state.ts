@@ -23,7 +23,11 @@ export function deriveSessionState(opts: {
     return 'waiting-for-input';
   }
 
-  if (lastEventType === 'user' && age <= WAITING_THRESHOLD_MS) {
+  // A pending user turn, or a tool the model called that is still executing.
+  if (
+    (lastEventType === 'user' || (lastEventType === 'assistant' && lastAssistantStopReason === 'tool_use')) &&
+    age <= WAITING_THRESHOLD_MS
+  ) {
     return 'running';
   }
 

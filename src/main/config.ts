@@ -6,14 +6,16 @@ import type { Config } from '../shared/types.js';
 const configDir = join(homedir(), '.config', 'llmusage');
 const configPath = join(configDir, 'config.json');
 
+export const DEFAULT_DATA_DIRS = [
+  join(homedir(), '.claude', 'projects'),
+  join(homedir(), '.codex', 'sessions'),
+  join(homedir(), '.localqwen', 'projects'),
+  join(homedir(), '.zcode', 'cli', 'rollout'),
+];
+
 const defaultConfig: Config = {
   theme: 'system',
-  dataDirs: [
-    join(homedir(), '.claude', 'projects'),
-    join(homedir(), '.codex', 'sessions'),
-    join(homedir(), '.localqwen', 'projects'),
-    join(homedir(), '.zcode', 'cli', 'rollout'),
-  ],
+  dataDirs: DEFAULT_DATA_DIRS,
 };
 
 /**
@@ -45,7 +47,3 @@ export async function saveConfig(partial: Partial<Config>): Promise<Config> {
   return merged;
 }
 
-/** Drop the cached copy so the next read hits disk (tests, external edits). */
-export function invalidateConfig(): void {
-  cached = null;
-}

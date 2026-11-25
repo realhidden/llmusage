@@ -2,6 +2,7 @@ import type { StoreSnapshot, SessionState } from '../../shared/types.js';
 import { resolveProjectCwd } from '../../shared/paths.js';
 import { formatCompact, bucketTotal, timeAgo, modelColor, modelShort } from '../components/token-bar.js';
 import { formatCost } from '../../shared/pricing.js';
+import { escapeHtml } from '../components/html.js';
 
 let expandedSessionId: string | null = null;
 let expandedProject: string | null = null;
@@ -157,13 +158,14 @@ function dominantModel(session: SessionState): string {
 }
 
 function variantForModel(model: string): number {
-  if (model.includes('opus')) return 0;
-  if (model.includes('sonnet')) return 1;
-  if (model.includes('haiku')) return 2;
-  if (model.includes('glm-5.1')) return 5;
-  if (model.includes('glm-5-turbo')) return 6;
-  if (model.includes('glm-4.5')) return 4;
-  if (model.includes('gpt')) return 3;
+  const m = model.toLowerCase();
+  if (/^claude-.*opus/.test(m)) return 0;
+  if (/^claude-.*sonnet/.test(m)) return 1;
+  if (/^claude-.*haiku/.test(m)) return 2;
+  if (m.includes('gpt')) return 3;
+  if (m.includes('glm-5.3-flash')) return 4;
+  if (m.includes('glm-5.3')) return 5;
+  if (m.includes('glm-5.4')) return 6;
   return stableVariant(model);
 }
 
@@ -206,7 +208,7 @@ function renderSessionRow(s: SessionState): string {
 
   const costStr = s.cost != null && s.cost > 0 ? ` · ${formatCost(s.cost)}` : '';
 
-  let html = `<div class="session-row compact" data-session-id="${s.sessionId}">
+  let html = `<div class="session-row compact" data-session-id="${escapeHtml(s.sessionId)}">
     <div class="session-header">
       <span class="session-dot ${s.state}"></span>
       <span class="session-name">${escapeHtml(name)}</span>
@@ -262,7 +264,7 @@ function renderSessionDetail(s: SessionState): string {
       html += `<div class="session-detail-row">
         <span style="display:flex;align-items:center;gap:4px">
           <span class="model-dot" style="background:${color};width:6px;height:6px;border-radius:50%;display:inline-block"></span>
-          ${modelShort(model)}
+          ${escapeHtml(modelShort(model))}
         </span>
         <span>${formatCompact(total)}</span>
       </div>`;
@@ -271,18 +273,15 @@ function renderSessionDetail(s: SessionState): string {
 
   html += `<div class="session-detail-actions">
     <button data-action="open" data-cwd="${escapeHtml(s.cwd)}">Open in Finder</button>
-    <button data-action="copy" data-session-id="${s.sessionId}">Copy session id</button>
+    <button data-action="copy" data-session-id="${escapeHtml(s.sessionId)}">Copy session id</button>
   </div>`;
 
   html += '</div>';
   return html;
 }
 
+/** Context window by model. Current Claude models are 1M except Haiku 4.5 and older. */
 function contextLimit(model: string): number {
-  if (model.includes('opus')) return 1_000_000;
+  if (/^claude-(fable|mythos|opus-(5|4-[6-9])|sonnet-(5|4-[6-9])|haiku-5)/i.test(model)) return 1_000_000;
   return 200_000;
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }

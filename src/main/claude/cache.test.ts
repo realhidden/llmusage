@@ -42,6 +42,7 @@ function sampleAgg(): FileAgg {
       byProject: new Map([['/proj', bucket(30)]]),
     }]]),
     window: new Map([[29_000_000, 100], [29_000_001, 200]]),
+    parser: { lastMessageId: "m1" },
   };
 }
 

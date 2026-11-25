@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { Store, DAY_HORIZON } from './store.js';
+import { Store } from './store.js';
 import type { RawEvent } from './parser.js';
 
 function assistantEvent(timestamp: string, output: number, model = 'claude-opus-5'): RawEvent {
@@ -32,19 +32,50 @@ describe('Store retention', () => {
     expect(Object.keys(agg)).not.toContain('events');
   });
 
-  it('drops days past the horizon instead of aggregating them forever', () => {
+  it('keeps old days and rolls them up by month', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-05-28T12:00:00.000Z'));
 
     const store = new Store();
-    const old = new Date(Date.now() - (DAY_HORIZON + 10) * 86_400_000).toISOString();
-    store.ingest('/d/s.jsonl', [assistantEvent(old, 99), assistantEvent('2026-05-28T11:00:00.000Z', 20)], '/d');
+    store.ingest('/d/s.jsonl', [
+      assistantEvent('2026-01-10T11:00:00.000Z', 99),
+      assistantEvent('2026-01-20T11:00:00.000Z', 1),
+      assistantEvent('2026-05-28T11:00:00.000Z', 20),
+    ], '/d');
 
-    const agg = store.fileAgg('/d/s.jsonl')!;
-    expect(agg.days.size).toBe(1);
-    expect(store.snapshot().today.tokens.output).toBe(20);
-    // Session totals still count every turn seen.
-    expect(agg.assistantTurns).toBe(2);
+    const snap = store.snapshot();
+    expect(snap.today.tokens.output).toBe(20);
+    const months = snap.usageRanges.last12Months;
+    expect(months).toHaveLength(12);
+    expect(months.at(-1)!.day).toBe('2026-05');
+    expect(months.find(m => m.day === '2026-01')!.bucket.tokens.output).toBe(100);
+    expect(months.find(m => m.day === '2026-01')!.bucket.assistantTurns).toBe(2);
+
+    vi.useRealTimers();
+  });
+
+  it('keeps archived usage after the file is retired, and drops it when the file comes back', () => {
+    const store = new Store();
+    store.ingest('/d/s.jsonl', [assistantEvent('2026-01-10T11:00:00.000Z', 7)], '/d');
+    const jan = () => store.snapshot().usageRanges.last12Months.find(m => m.day === '2026-01')?.bucket.tokens.output ?? 0;
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-28T12:00:00.000Z'));
+    expect(store.archiveFile('/d/s.jsonl')).toBe(true);
+    expect(store.hasFile('/d/s.jsonl')).toBe(false);
+    expect(jan()).toBe(7);
+
+    // Resumed: re-read in full as a live file, so the archived copy must not add to it.
+    store.ingest('/d/s.jsonl', [assistantEvent('2026-01-10T11:00:00.000Z', 7)], '/d');
+    expect(store.isArchived('/d/s.jsonl')).toBe(false);
+    expect(jan()).toBe(7);
+
+    // Archived usage of a dir that is no longer watched is hidden, not lost.
+    store.archiveFile('/d/s.jsonl');
+    store.setActiveDirs(['/other']);
+    expect(jan()).toBe(0);
+    store.setActiveDirs(['/d']);
+    expect(jan()).toBe(7);
 
     vi.useRealTimers();
   });
