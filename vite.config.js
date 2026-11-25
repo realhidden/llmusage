@@ -7,7 +7,7 @@ function electronFileProtocol() {
   return {
     name: 'electron-file-protocol',
     closeBundle() {
-      const htmlPath = resolve(__dirname, 'dist/renderer/index.html');
+      const htmlPath = resolve(import.meta.dirname, 'dist/renderer/index.html');
       let html = readFileSync(htmlPath, 'utf-8');
       // Replace type="module" with defer — module breaks file:// in Electron,
       // but defer is needed so the script waits for DOM before executing
@@ -32,7 +32,7 @@ export default defineConfig({
     target: 'es2022',
     cssCodeSplit: false,
     rollupOptions: {
-      input: resolve(__dirname, 'src/renderer/index.html'),
+      input: resolve(import.meta.dirname, 'src/renderer/index.html'),
       output: {
         format: 'iife',
         entryFileNames: 'assets/app.js',
