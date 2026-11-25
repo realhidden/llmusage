@@ -26,6 +26,7 @@ describe('providerOf', () => {
     expect(providerOf(CLAUDE)).toBe('claude');
     expect(providerOf(CODEX)).toBe('codex');
     expect(providerOf(QWEN)).toBe('qwen');
+    expect(providerOf('/home/u/.qwen/projects')).toBe('qwen');
     expect(providerOf(ZCODE)).toBe('zcode');
     expect(providerOf('C:\\Users\\u\\.codex\\sessions')).toBe('codex');
     expect(providerOf('/home/u/.glm/projects')).toBe('claude');

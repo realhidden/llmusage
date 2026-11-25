@@ -440,7 +440,8 @@ export type Provider = 'claude' | 'codex' | 'qwen' | 'zcode';
 export function providerOf(dir: string): Provider {
   const d = dir.replace(/\\/g, '/');
   if (d.includes('.codex/sessions')) return 'codex';
-  if (d.includes('.localqwen/projects')) return 'qwen';
+  // qwen-code's own home, or one moved elsewhere such as ~/.localqwen.
+  if (/\/\.(local)?qwen\/projects/.test(d)) return 'qwen';
   if (d.includes('.zcode/cli/rollout')) return 'zcode';
   return 'claude';
 }

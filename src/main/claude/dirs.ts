@@ -22,7 +22,7 @@ function expandTilde(p: string): string {
 }
 
 function defaultLabel(path: string): string {
-  // ~/.codex/sessions -> codex, ~/.localqwen/projects -> qwen, ~/.zcode/cli/rollout -> zcode;
+  // ~/.codex/sessions -> codex, ~/.qwen/projects -> qwen, ~/.zcode/cli/rollout -> zcode;
   // any other Claude-style dir is named after its dot-dir: ~/.claude-zai/projects -> claude-zai
   const provider = providerOf(path);
   if (provider !== 'claude') return provider;

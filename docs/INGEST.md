@@ -121,7 +121,9 @@ Usage comes from the `qwen-code.api_response` telemetry line written once per
 API call, not from `usageMetadata` on assistant lines: some versions write
 none there, assistant lines name the configured alias rather than the served
 model, and the session file's telemetry already covers its subagents. It
-matches qwen's own `~/.localqwen/usage/token-usage-*.jsonl` call for call.
+matches qwen's own `<qwen home>/usage/token-usage-*.jsonl` call for call.
+Both `~/.qwen/projects` and a relocated home such as `~/.localqwen/projects`
+route to this parser.
 
 ## The scan cache
 

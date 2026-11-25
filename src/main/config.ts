@@ -9,6 +9,7 @@ const configPath = join(configDir, 'config.json');
 export const DEFAULT_DATA_DIRS = [
   join(homedir(), '.claude', 'projects'),
   join(homedir(), '.codex', 'sessions'),
+  join(homedir(), '.qwen', 'projects'),
   join(homedir(), '.localqwen', 'projects'),
   join(homedir(), '.zcode', 'cli', 'rollout'),
 ];

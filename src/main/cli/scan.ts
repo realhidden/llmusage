@@ -11,10 +11,10 @@ const showResume = args.includes('--resume') || args.includes('--lately');
 const asJson = args.includes('--json');
 
 /** The CLI that resumes a session from this dir. */
-const RESUME_CLI = { claude: 'claude', codex: 'codex', qwen: 'localqwen', zcode: 'zcode' } as const;
+const RESUME_CLI = { claude: 'claude', codex: 'codex', qwen: 'qwen', zcode: 'zcode' } as const;
 
 function resumeCommand(session: SessionState): string {
-  const provider = RESUME_CLI[providerOf(session.dir)];
+  const provider = session.dir.includes('.localqwen') ? 'localqwen' : RESUME_CLI[providerOf(session.dir)];
   const id = session.sessionId || 'unknown';
   return `${provider} --resume ${id}`;
 }
