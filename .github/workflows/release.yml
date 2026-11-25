@@ -13,10 +13,10 @@ jobs:
     runs-on: macos-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
 
@@ -26,23 +26,21 @@ jobs:
       - name: Build
         run: npm run build
 
+      # The release step below publishes; electron-builder's implicit tag
+      # publishing uploaded unsigned DMGs and stray blockmaps first.
       - name: Package with electron-builder
-        run: npx electron-builder --mac --arm64 --x64
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --mac --arm64 --x64 --publish never
 
-      - name: Ad-hoc sign arm64 DMG
-        run: codesign --force --sign - release/llmusage-*arm64-mac.dmg || true
-
-      - name: Ad-hoc sign x64 DMG
-        run: codesign --force --sign - release/llmusage-*x64-mac.dmg || true
+      # electron-builder names them llmusage-<v>-arm64.dmg and llmusage-<v>.dmg (x64).
+      - name: Ad-hoc sign DMGs
+        run: for f in release/*.dmg; do codesign --force --sign - "$f"; done
 
       - name: Get version
         id: version
         run: echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
           files: |
