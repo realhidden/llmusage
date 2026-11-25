@@ -1,7 +1,7 @@
 {
   "name": "llmusage",
   "version": "0.6.2",
-  "description": "macOS menu bar app for Claude Code usage tracking",
+  "description": "macOS menu bar app for coding-agent token usage and live session state",
   "type": "module",
   "main": "dist/main/main/main.js",
   "scripts": {
@@ -21,7 +21,7 @@
     "typecheck": "tsc --noEmit && tsc -p src/main/tsconfig.typecheck.json"
   },
   "keywords": [],
-  "license": "MIT",
+  "license": "Beerware",
   "dependencies": {
     "menubar": "^9.5.2"
   },
@@ -33,5 +33,6 @@
     "typescript": "^7.0.2",
     "vite": "^8.3.0",
     "vitest": "^4.1.5"
-  }
+  },
+  "repository": "github:realhidden/llmusage"
 }
